@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Airframe.io - 3D Aerial Combat</title>
+  </head>
+  <body>
+    <script>
+      // Suppress unhandled rejections and error overlays for benign Vite/WebSocket HMR issues
+      window.addEventListener('unhandledrejection', function(event) {
+        if (event.reason && (
+          event.reason.message?.includes('WebSocket') || 
+          event.reason.message?.includes('websocket') ||
+          String(event.reason).includes('WebSocket') ||
+          String(event.reason).includes('websocket')
+        )) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      });
+      window.addEventListener('error', function(event) {
+        if (event.message && (
+          event.message.includes('WebSocket') || 
+          event.message.includes('websocket')
+        )) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      });
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
