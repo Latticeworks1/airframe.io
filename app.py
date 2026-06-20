@@ -1,10 +1,13 @@
 import asyncio
+import hashlib
 import json
 import math
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -13,365 +16,95 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 
-SERVER_HZ = 30
+PROTOCOL_VERSION = 1
+
+SERVER_HZ = 60
+NET_HZ = 20
+INPUT_STALE_MS = 250
+
 DT = 1.0 / SERVER_HZ
-
-
-rooms: dict[str, set[WebSocket]] = {}
-room_players: dict[str, dict[str, dict[str, Any]]] = {}
-room_inputs: dict[str, dict[str, dict[str, Any]]] = {}
-room_ticks: dict[str, int] = {}
-
-
-async def tick_loop():
-    while True:
-        await asyncio.sleep(DT)
-
-        for room_id in list(rooms.keys()):
-            if not rooms.get(room_id):
-                continue
-
-            players = room_players.get(room_id, {})
-            inputs = room_inputs.get(room_id, {})
-
-            if not players:
-                continue
-
-            room_ticks[room_id] = room_ticks.get(room_id, 0) + 1
-            tick = room_ticks[room_id]
-
-            updates = []
-
-            for pid, player in players.items():
-                inp = inputs.get(pid, default_input(pid))
-                step_player(player, inp, DT)
-                updates.append(pack_state(player))
-
-            await broadcast(room_id, ["u", tick, updates])
-
-
-@asynccontextmanager
-async def lifespan(app):
-    task = asyncio.create_task(tick_loop())
-    yield
-    task.cancel()
-
-
-app = FastAPI(title="airframe.io", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-
-for name in ["METERED_DOMAIN", "METERED_SECRET_KEY"]:
-    if not os.getenv(name):
-        raise RuntimeError(f"Missing required Hugging Face Space secret: {name}")
-
-
-METERED_DOMAIN = os.environ["METERED_DOMAIN"]
-METERED_SECRET_KEY = os.environ["METERED_SECRET_KEY"]
-TURN_TTL_SECONDS = int(os.getenv("TURN_TTL_SECONDS", "3600"))
-
-
-@app.get("/", response_class=HTMLResponse)
-def index():
-    return INDEX_HTML
-
-
-@app.get("/health")
-def health():
-    return {
-        "ok": True,
-        "meteredDomain": METERED_DOMAIN,
-        "turnTtlSeconds": TURN_TTL_SECONDS,
-        "activeRooms": len(rooms),
-        "serverHz": SERVER_HZ,
-    }
-
-
-@app.get("/ice")
-async def ice():
-    label = f"airframe-{int(time.time())}-{uuid.uuid4().hex[:8]}"
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        created = await client.post(
-            f"https://{METERED_DOMAIN}/api/v1/turn/credential",
-            params={"secretKey": METERED_SECRET_KEY},
-            json={
-                "label": label,
-                "expiryInSeconds": TURN_TTL_SECONDS,
-            },
-        )
-
-        if created.status_code != 200:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "error": "Metered credential creation failed",
-                    "status": created.status_code,
-                    "body": created.text,
-                },
-            )
-
-        credential = created.json()
-        api_key = credential.get("apiKey")
-
-        if not api_key:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "error": "Metered response missing apiKey",
-                    "response": credential,
-                },
-            )
-
-        fetched = await client.get(
-            f"https://{METERED_DOMAIN}/api/v1/turn/credentials",
-            params={"apiKey": api_key},
-        )
-
-        if fetched.status_code != 200:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "error": "Metered ICE fetch failed",
-                    "status": fetched.status_code,
-                    "body": fetched.text,
-                },
-            )
-
-        ice_servers = fetched.json()
-
-    if not isinstance(ice_servers, list) or not ice_servers:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": "Metered returned invalid ICE server list",
-                "response": ice_servers,
-            },
-        )
-
-    return {
-        "iceServers": ice_servers,
-        "ttlSeconds": TURN_TTL_SECONDS,
-        "label": label,
-    }
-
-
-@app.websocket("/ws/{room_id}")
-async def ws_room(ws: WebSocket, room_id: str):
-    await ws.accept()
-
-    room = rooms.setdefault(room_id, set())
-    players = room_players.setdefault(room_id, {})
-    inputs = room_inputs.setdefault(room_id, {})
-    room_ticks.setdefault(room_id, 0)
-
-    room.add(ws)
-    player_id: str | None = None
-
-    await send(ws, ["c", room_id, now_ms()])
-
-    try:
-        while True:
-            raw = await ws.receive_text()
-
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                await send(ws, ["e", "invalid json"])
-                continue
-
-            if not isinstance(msg, list) or not msg:
-                await send(ws, ["e", "packet must be a non-empty array"])
-                continue
-
-            kind = msg[0]
-
-            if kind == "j":
-                if len(msg) < 4:
-                    await send(ws, ["e", "join packet requires ['j', id, name, color]"])
-                    continue
-
-                player_id = str(msg[1])
-                name = str(msg[2])
-                color = str(msg[3])
-
-                player = make_player(player_id, name, color)
-                players[player_id] = player
-                inputs[player_id] = default_input(player_id)
-
-                await send(ws, ["i", room_id, room_ticks.get(room_id, 0), [pack_player(p) for p in players.values()]])
-                await broadcast(room_id, ["j", pack_player(player)], exclude=ws)
-                continue
-
-            if kind == "in":
-                if len(msg) < 8:
-                    await send(ws, ["e", "input packet requires ['in', id, seq, throttle, yaw, pitch, roll, fire]"])
-                    continue
-
-                pid = str(msg[1])
-
-                if pid not in players:
-                    await send(ws, ["e", f"unknown player id: {pid}"])
-                    continue
-
-                inputs[pid] = {
-                    "id": pid,
-                    "seq": int(msg[2]),
-                    "throttle": clamp(float(msg[3]), -1.0, 1.0),
-                    "yaw": clamp(float(msg[4]), -1.0, 1.0),
-                    "pitch": clamp(float(msg[5]), -1.0, 1.0),
-                    "roll": clamp(float(msg[6]), -1.0, 1.0),
-                    "fire": 1 if msg[7] else 0,
-                }
-                continue
-
-            await broadcast(room_id, msg, exclude=ws)
-
-    except WebSocketDisconnect:
-        pass
-
-    except Exception as exc:
-        await broadcast(room_id, ["e", str(exc)], exclude=ws)
-
-    finally:
-        room.discard(ws)
-
-        if player_id:
-            players.pop(player_id, None)
-            inputs.pop(player_id, None)
-            await broadcast(room_id, ["l", player_id])
-
-        if not room:
-            rooms.pop(room_id, None)
-            room_players.pop(room_id, None)
-            room_inputs.pop(room_id, None)
-            room_ticks.pop(room_id, None)
-
-
-def make_player(pid: str, name: str, color: str) -> dict[str, Any]:
-    spawn = (hash(pid) % 800) - 400
-
-    return {
-        "id": pid,
-        "name": name,
-        "color": color,
-        "x": float(spawn),
-        "y": 140.0,
-        "z": float(-spawn),
-        "vx": 0.0,
-        "vy": 0.0,
-        "vz": 120.0,
-        "yaw": 0.0,
-        "pitch": 0.0,
-        "roll": 0.0,
-        "throttleLevel": 0.45,
-        "ack": 0,
-    }
-
-
-def default_input(pid: str) -> dict[str, Any]:
-    return {
-        "id": pid,
-        "seq": 0,
-        "throttle": 0.0,
-        "yaw": 0.0,
-        "pitch": 0.0,
-        "roll": 0.0,
-        "fire": 0,
-    }
-
-
-def step_player(p: dict[str, Any], inp: dict[str, Any], dt: float):
-    p["ack"] = int(inp.get("seq", p.get("ack", 0)))
-
-    throttle_input = float(inp.get("throttle", 0.0))
-    yaw_input = float(inp.get("yaw", 0.0))
-    pitch_input = float(inp.get("pitch", 0.0))
-    roll_input = float(inp.get("roll", 0.0))
-
-    p["throttleLevel"] = clamp(p["throttleLevel"] + throttle_input * dt * 0.65, 0.0, 1.0)
-
-    yaw_rate = 1.45
-    pitch_rate = 0.9
-    roll_rate = 3.2
-
-    p["yaw"] += yaw_input * yaw_rate * dt
-    p["pitch"] = clamp(p["pitch"] + pitch_input * pitch_rate * dt, -0.75, 0.75)
-    p["roll"] += roll_input * roll_rate * dt
-    p["roll"] *= 0.94
-
-    speed = 80.0 + p["throttleLevel"] * 240.0
-
-    cp = math.cos(p["pitch"])
-    sx = math.cos(p["yaw"]) * cp
-    sy = math.sin(p["pitch"])
-    sz = math.sin(p["yaw"]) * cp
-
-    target_vx = sx * speed
-    target_vy = sy * speed
-    target_vz = sz * speed
-
-    blend = 0.10
-
-    p["vx"] += (target_vx - p["vx"]) * blend
-    p["vy"] += (target_vy - p["vy"]) * blend
-    p["vz"] += (target_vz - p["vz"]) * blend
-
-    p["x"] += p["vx"] * dt
-    p["y"] += p["vy"] * dt
-    p["z"] += p["vz"] * dt
-
-    p["x"] = wrap(p["x"], -1200.0, 1200.0)
-    p["z"] = wrap(p["z"], -1200.0, 1200.0)
-
-    if p["y"] < 35.0:
-        p["y"] = 35.0
-        p["vy"] = max(0.0, p["vy"])
-
-    if p["y"] > 900.0:
-        p["y"] = 900.0
-        p["vy"] = min(0.0, p["vy"])
-
-
-def pack_player(p: dict[str, Any]) -> list[Any]:
-    return [
-        p["id"],
-        p["name"],
-        p["color"],
-        r3(p["x"]),
-        r3(p["y"]),
-        r3(p["z"]),
-        r3(p["vx"]),
-        r3(p["vy"]),
-        r3(p["vz"]),
-        r4(p["yaw"]),
-        r4(p["pitch"]),
-        r4(p["roll"]),
-        int(p["ack"]),
-    ]
-
-
-def pack_state(p: dict[str, Any]) -> list[Any]:
-    return [
-        p["id"],
-        int(p["ack"]),
-        r3(p["x"]),
-        r3(p["y"]),
-        r3(p["z"]),
-        r3(p["vx"]),
-        r3(p["vy"]),
-        r3(p["vz"]),
-        r4(p["yaw"]),
-        r4(p["pitch"]),
-        r4(p["roll"]),
-    ]
+NET_INTERVAL_TICKS = max(1, round(SERVER_HZ / NET_HZ))
+
+MAX_PLAYERS_PER_ROOM = 16
+MAX_PACKET_BYTES = 2048
+EMPTY_ROOM_TTL_MS = 30_000
+
+WORLD_MIN = -1600.0
+WORLD_MAX = 1600.0
+ALT_MIN = 35.0
+ALT_MAX = 1000.0
+
+ROOM_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
+
+
+@dataclass
+class InputState:
+    seq: int = 0
+    throttle: float = 0.0
+    yaw: float = 0.0
+    pitch: float = 0.0
+    roll: float = 0.0
+    fire: int = 0
+    time_ms: int = 0
+
+
+@dataclass
+class Entity:
+    id: str
+    kind: str
+    owner_id: str | None
+    x: float
+    y: float
+    z: float
+    vx: float = 0.0
+    vy: float = 0.0
+    vz: float = 145.0
+    yaw: float = 0.0
+    pitch: float = 0.0
+    roll: float = 0.0
+    throttle: float = 0.50
+    hp: float = 100.0
+    flags: int = 0
+    ack: int = 0
+
+
+@dataclass
+class Player:
+    id: str
+    name: str
+    color: str
+    entity_id: str
+    joined_ms: int = 0
+    last_seen_ms: int = 0
+
+
+@dataclass
+class Room:
+    id: str
+    sockets: set[WebSocket] = field(default_factory=set)
+    socket_players: dict[WebSocket, str] = field(default_factory=dict)
+    players: dict[str, Player] = field(default_factory=dict)
+    entities: dict[str, Entity] = field(default_factory=dict)
+    inputs: dict[str, InputState] = field(default_factory=dict)
+    tick: int = 0
+    created_ms: int = 0
+    last_active_ms: int = 0
+    last_net_tick: int = 0
+
+
+rooms: dict[str, Room] = {}
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def stable_hash(value: str) -> int:
+    return int(hashlib.sha256(value.encode("utf-8")).hexdigest()[:12], 16)
+
+
+def clean_str(value: Any, n: int) -> str:
+    return str(value).strip()[:n]
 
 
 def clamp(v: float, lo: float, hi: float) -> float:
@@ -395,24 +128,154 @@ def r4(v: float) -> float:
     return round(float(v), 4)
 
 
-def now_ms() -> int:
-    return int(time.time() * 1000)
-
-
-async def send(ws: WebSocket, msg: Any):
-    await ws.send_text(json.dumps(msg, separators=(",", ":")))
-
-
-async def broadcast(room_id: str, msg: Any, exclude: WebSocket | None = None):
+def get_or_create_room(room_id: str) -> Room:
     room = rooms.get(room_id)
+    if room:
+        return room
 
-    if not room:
-        return
+    t = now_ms()
+    room = Room(id=room_id, created_ms=t, last_active_ms=t)
+    rooms[room_id] = room
+    return room
 
-    payload = json.dumps(msg, separators=(",", ":"))
-    dead = []
 
-    for peer in list(room):
+def cleanup_empty_rooms():
+    t = now_ms()
+
+    for room_id, room in list(rooms.items()):
+        if room.sockets:
+            continue
+
+        if t - room.last_active_ms >= EMPTY_ROOM_TTL_MS:
+            rooms.pop(room_id, None)
+
+
+def make_entity_for_player(player_id: str) -> Entity:
+    h = stable_hash(player_id)
+
+    x = float((h % 1800) - 900)
+    z = float(((h // 1800) % 1800) - 900)
+
+    return Entity(
+        id=f"aircraft:{player_id}",
+        kind="aircraft",
+        owner_id=player_id,
+        x=x,
+        y=150.0,
+        z=z,
+        vx=0.0,
+        vy=0.0,
+        vz=145.0,
+        yaw=0.0,
+        pitch=0.0,
+        roll=0.0,
+        throttle=0.50,
+        hp=100.0,
+        flags=0,
+        ack=0,
+    )
+
+
+def neutral_input(seq: int = 0) -> InputState:
+    return InputState(seq=seq, time_ms=now_ms())
+
+
+def step_aircraft(e: Entity, inp: InputState, dt: float):
+    e.ack = inp.seq
+
+    e.throttle = clamp(e.throttle + inp.throttle * dt * 0.65, 0.0, 1.0)
+
+    e.yaw += inp.yaw * 1.55 * dt
+    e.pitch = clamp(e.pitch + inp.pitch * 0.95 * dt, -0.80, 0.80)
+    e.roll += inp.roll * 3.6 * dt
+    e.roll *= 0.935
+
+    speed = 90.0 + e.throttle * 250.0
+
+    cp = math.cos(e.pitch)
+    fx = math.cos(e.yaw) * cp
+    fy = math.sin(e.pitch)
+    fz = math.sin(e.yaw) * cp
+
+    target_vx = fx * speed
+    target_vy = fy * speed
+    target_vz = fz * speed
+
+    blend = 0.11
+
+    e.vx += (target_vx - e.vx) * blend
+    e.vy += (target_vy - e.vy) * blend
+    e.vz += (target_vz - e.vz) * blend
+
+    e.x += e.vx * dt
+    e.y += e.vy * dt
+    e.z += e.vz * dt
+
+    e.x = wrap(e.x, WORLD_MIN, WORLD_MAX)
+    e.z = wrap(e.z, WORLD_MIN, WORLD_MAX)
+
+    if e.y < ALT_MIN:
+        e.y = ALT_MIN
+        e.vy = max(0.0, e.vy)
+
+    if e.y > ALT_MAX:
+        e.y = ALT_MAX
+        e.vy = min(0.0, e.vy)
+
+
+def pack_player(p: Player) -> list[Any]:
+    return [p.id, p.name, p.color, p.entity_id]
+
+
+def pack_entity(e: Entity) -> list[Any]:
+    return [
+        e.id,
+        e.kind,
+        e.owner_id,
+        r3(e.x),
+        r3(e.y),
+        r3(e.z),
+        r3(e.vx),
+        r3(e.vy),
+        r3(e.vz),
+        r4(e.yaw),
+        r4(e.pitch),
+        r4(e.roll),
+        r3(e.throttle),
+        r3(e.hp),
+        int(e.flags),
+        int(e.ack),
+    ]
+
+
+def pack_delta(e: Entity) -> list[Any]:
+    return [
+        e.id,
+        int(e.ack),
+        r3(e.x),
+        r3(e.y),
+        r3(e.z),
+        r3(e.vx),
+        r3(e.vy),
+        r3(e.vz),
+        r4(e.yaw),
+        r4(e.pitch),
+        r4(e.roll),
+        r3(e.throttle),
+        r3(e.hp),
+        int(e.flags),
+    ]
+
+
+async def send(ws: WebSocket, packet: Any):
+    await ws.send_text(json.dumps(packet, separators=(",", ":")))
+
+
+async def broadcast(room: Room, packet: Any, exclude: WebSocket | None = None):
+    payload = json.dumps(packet, separators=(",", ":"))
+    dead: list[WebSocket] = []
+
+    for peer in list(room.sockets):
         if peer is exclude:
             continue
 
@@ -422,13 +285,303 @@ async def broadcast(room_id: str, msg: Any, exclude: WebSocket | None = None):
             dead.append(peer)
 
     for peer in dead:
-        room.discard(peer)
+        room.sockets.discard(peer)
+        room.socket_players.pop(peer, None)
 
-    if not room:
-        rooms.pop(room_id, None)
-        room_players.pop(room_id, None)
-        room_inputs.pop(room_id, None)
-        room_ticks.pop(room_id, None)
+
+async def sim_loop():
+    while True:
+        await asyncio.sleep(DT)
+        cleanup_empty_rooms()
+
+        t = now_ms()
+
+        for room in list(rooms.values()):
+            if not room.sockets:
+                continue
+
+            room.tick += 1
+            room.last_active_ms = t
+
+            for player in list(room.players.values()):
+                entity = room.entities.get(player.entity_id)
+                if not entity:
+                    continue
+
+                inp = room.inputs.get(player.id, neutral_input(entity.ack))
+
+                if t - inp.time_ms > INPUT_STALE_MS:
+                    inp = neutral_input(inp.seq)
+                    room.inputs[player.id] = inp
+
+                if entity.kind == "aircraft":
+                    step_aircraft(entity, inp, DT)
+
+            if room.tick - room.last_net_tick >= NET_INTERVAL_TICKS:
+                room.last_net_tick = room.tick
+                deltas = [pack_delta(e) for e in room.entities.values()]
+                await broadcast(room, ["u", room.tick, deltas])
+
+
+@asynccontextmanager
+async def lifespan(app):
+    task = asyncio.create_task(sim_loop())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="airframe.io", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+for name in ["METERED_DOMAIN", "METERED_SECRET_KEY"]:
+    if not os.getenv(name):
+        raise RuntimeError(f"Missing required Hugging Face Space secret: {name}")
+
+METERED_DOMAIN = os.environ["METERED_DOMAIN"]
+METERED_SECRET_KEY = os.environ["METERED_SECRET_KEY"]
+TURN_TTL_SECONDS = int(os.getenv("TURN_TTL_SECONDS", "3600"))
+
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return INDEX_HTML
+
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "protocol": PROTOCOL_VERSION,
+        "serverHz": SERVER_HZ,
+        "netHz": NET_HZ,
+        "activeRooms": len(rooms),
+        "players": sum(len(r.players) for r in rooms.values()),
+        "entities": sum(len(r.entities) for r in rooms.values()),
+        "meteredDomain": METERED_DOMAIN,
+    }
+
+
+@app.get("/ice")
+async def ice():
+    label = f"airframe-{int(time.time())}-{uuid.uuid4().hex[:8]}"
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        created = await client.post(
+            f"https://{METERED_DOMAIN}/api/v1/turn/credential",
+            params={"secretKey": METERED_SECRET_KEY},
+            json={"label": label, "expiryInSeconds": TURN_TTL_SECONDS},
+        )
+
+        if created.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "Metered credential creation failed",
+                    "status": created.status_code,
+                    "body": created.text,
+                },
+            )
+
+        credential = created.json()
+        api_key = credential.get("apiKey")
+
+        if not api_key:
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "Metered response missing apiKey", "response": credential},
+            )
+
+        fetched = await client.get(
+            f"https://{METERED_DOMAIN}/api/v1/turn/credentials",
+            params={"apiKey": api_key},
+        )
+
+        if fetched.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "Metered ICE fetch failed",
+                    "status": fetched.status_code,
+                    "body": fetched.text,
+                },
+            )
+
+        ice_servers = fetched.json()
+
+    if not isinstance(ice_servers, list) or not ice_servers:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "Metered returned invalid ICE server list", "response": ice_servers},
+        )
+
+    return {"iceServers": ice_servers, "ttlSeconds": TURN_TTL_SECONDS, "label": label}
+
+
+@app.websocket("/ws/{room_id}")
+async def ws_room(ws: WebSocket, room_id: str):
+    if not ROOM_RE.match(room_id):
+        await ws.close(code=1008)
+        return
+
+    await ws.accept()
+
+    room = get_or_create_room(room_id)
+    room.sockets.add(ws)
+    room.last_active_ms = now_ms()
+
+    player_id: str | None = None
+
+    await send(ws, ["h", PROTOCOL_VERSION, SERVER_HZ, NET_HZ])
+
+    try:
+        while True:
+            raw = await ws.receive_text()
+
+            if len(raw) > MAX_PACKET_BYTES:
+                await send(ws, ["e", "packet_too_large", str(len(raw))])
+                continue
+
+            try:
+                packet = json.loads(raw)
+            except json.JSONDecodeError:
+                await send(ws, ["e", "invalid_json", raw[:120]])
+                continue
+
+            if not isinstance(packet, list) or not packet:
+                await send(ws, ["e", "bad_packet", "packet must be non-empty array"])
+                continue
+
+            kind = packet[0]
+
+            if kind == "h":
+                client_version = int(packet[1]) if len(packet) > 1 else 0
+
+                if client_version != PROTOCOL_VERSION:
+                    await send(ws, ["e", "protocol_mismatch", f"server={PROTOCOL_VERSION} client={client_version}"])
+                    continue
+
+                await send(ws, ["h", PROTOCOL_VERSION, SERVER_HZ, NET_HZ])
+                continue
+
+            if kind == "j":
+                if len(packet) < 5:
+                    await send(ws, ["e", "bad_join", "requires ['j', room, id, name, color]"])
+                    continue
+
+                requested_room = clean_str(packet[1], 32)
+
+                if requested_room != room_id:
+                    await send(ws, ["e", "room_mismatch", requested_room])
+                    continue
+
+                pid = clean_str(packet[2], 80)
+
+                if len(room.players) >= MAX_PLAYERS_PER_ROOM and pid not in room.players:
+                    await send(ws, ["e", "room_full", str(MAX_PLAYERS_PER_ROOM)])
+                    continue
+
+                name = clean_str(packet[3], 24) or pid[:8]
+                color = clean_str(packet[4], 32) or "#e8dcc0"
+
+                if not pid:
+                    await send(ws, ["e", "bad_player_id", "empty"])
+                    continue
+
+                player_id = pid
+
+                entity = make_entity_for_player(pid)
+                player = Player(
+                    id=pid,
+                    name=name,
+                    color=color,
+                    entity_id=entity.id,
+                    joined_ms=now_ms(),
+                    last_seen_ms=now_ms(),
+                )
+
+                room.players[pid] = player
+                room.entities[entity.id] = entity
+                room.inputs[pid] = neutral_input(0)
+                room.socket_players[ws] = pid
+
+                await send(ws, [
+                    "i",
+                    room.id,
+                    room.tick,
+                    pid,
+                    [pack_player(p) for p in room.players.values()],
+                    [pack_entity(e) for e in room.entities.values()],
+                ])
+
+                await broadcast(room, ["ev", room.tick, "join", [pack_player(player), pack_entity(entity)]], exclude=ws)
+                continue
+
+            if kind == "in":
+                if len(packet) < 8:
+                    await send(ws, ["e", "bad_input", "requires ['in', id, seq, throttle, yaw, pitch, roll, fire]"])
+                    continue
+
+                pid = clean_str(packet[1], 80)
+
+                if pid != player_id:
+                    await send(ws, ["e", "input_owner_mismatch", pid])
+                    continue
+
+                if pid not in room.players:
+                    await send(ws, ["e", "unknown_player", pid])
+                    continue
+
+                seq = int(packet[2])
+                old_seq = room.inputs.get(pid, neutral_input()).seq
+
+                if seq < old_seq:
+                    continue
+
+                room.inputs[pid] = InputState(
+                    seq=seq,
+                    throttle=clamp(float(packet[3]), -1.0, 1.0),
+                    yaw=clamp(float(packet[4]), -1.0, 1.0),
+                    pitch=clamp(float(packet[5]), -1.0, 1.0),
+                    roll=clamp(float(packet[6]), -1.0, 1.0),
+                    fire=1 if packet[7] else 0,
+                    time_ms=now_ms(),
+                )
+
+                room.players[pid].last_seen_ms = now_ms()
+                continue
+
+            await send(ws, ["e", "unknown_packet", str(kind)])
+
+    except WebSocketDisconnect:
+        pass
+
+    except Exception as exc:
+        await broadcast(room, ["e", "server_exception", str(exc)], exclude=ws)
+
+    finally:
+        room.sockets.discard(ws)
+
+        pid = player_id or room.socket_players.pop(ws, None)
+
+        if pid:
+            player = room.players.pop(pid, None)
+            room.inputs.pop(pid, None)
+
+            entity_id = player.entity_id if player else f"aircraft:{pid}"
+            room.entities.pop(entity_id, None)
+
+            await broadcast(room, ["l", pid, entity_id])
+
+        room.socket_players.pop(ws, None)
+        room.last_active_ms = now_ms()
 
 
 INDEX_HTML = """
@@ -452,12 +605,12 @@ INDEX_HTML = """
       position: fixed;
       left: 14px;
       top: 12px;
-      background: rgba(5, 7, 11, 0.78);
+      background: rgba(5, 7, 11, 0.80);
       border: 1px solid #2f3b52;
       padding: 10px 12px;
       font-size: 13px;
       line-height: 1.45;
-      min-width: 340px;
+      min-width: 370px;
       z-index: 10;
     }
 
@@ -473,10 +626,10 @@ INDEX_HTML = """
       position: fixed;
       right: 14px;
       bottom: 12px;
-      width: 460px;
-      max-height: 170px;
+      width: 490px;
+      max-height: 180px;
       overflow: auto;
-      background: rgba(5, 7, 11, 0.78);
+      background: rgba(5, 7, 11, 0.80);
       border: 1px solid #2f3b52;
       padding: 10px;
       font-size: 12px;
@@ -491,13 +644,16 @@ INDEX_HTML = """
 </head>
 <body>
   <div id="hud">
-    <div><b>airframe.io 3D sync test</b></div>
+    <div><b>airframe.io 3D authoritative sync</b></div>
     <div>Room: <input id="room" value="main"></div>
     <div>Player: <span id="player"></span></div>
     <div>Status: <span id="status">idle</span></div>
     <div>Players: <span id="count">0</span></div>
     <div>TX: <span id="tx">0</span> RX: <span id="rx">0</span></div>
     <div>Server tick: <span id="tick">0</span></div>
+    <div>Pending inputs: <span id="pending">0</span></div>
+    <div>Correction error: <span id="error">0</span></div>
+    <div>Protocol: <span id="proto">?</span></div>
     <div>Controls: W/S pitch, A/D yaw, Q/E roll, Shift/Ctrl throttle</div>
   </div>
 
@@ -505,6 +661,11 @@ INDEX_HTML = """
 
 <script type="module">
 import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+const PROTOCOL_VERSION = 1;
+const CLIENT_PREDICT_HZ = 60;
+const FIXED_DT = 1 / CLIENT_PREDICT_HZ;
+const INTERP_DELAY = 150;
 
 const statusEl = document.getElementById("status");
 const countEl = document.getElementById("count");
@@ -514,14 +675,18 @@ const logEl = document.getElementById("log");
 const txEl = document.getElementById("tx");
 const rxEl = document.getElementById("rx");
 const tickEl = document.getElementById("tick");
-
-const SERVER_HZ = 30;
-const FIXED_DT = 1 / SERVER_HZ;
+const pendingEl = document.getElementById("pending");
+const errorEl = document.getElementById("error");
+const protoEl = document.getElementById("proto");
 
 let ws = null;
 let keys = new Set();
+
 let players = new Map();
+let entities = new Map();
 let meshes = new Map();
+let histories = new Map();
+
 let pendingInputs = [];
 
 let txPackets = 0;
@@ -529,21 +694,28 @@ let rxPackets = 0;
 let inputSeq = 0;
 let lastInputSend = 0;
 let serverTick = 0;
+let correctionError = 0;
+
+let serverHz = 60;
+let netHz = 20;
 
 let me = {
   id: localStorage.getItem("airframePlayerId"),
+  entityId: "",
   name: "",
   color: "",
   x: 0,
-  y: 140,
+  y: 150,
   z: 0,
   vx: 0,
   vy: 0,
-  vz: 120,
+  vz: 145,
   yaw: 0,
   pitch: 0,
   roll: 0,
-  throttleLevel: 0.45,
+  throttleLevel: 0.50,
+  hp: 100,
+  flags: 0,
   ack: 0
 };
 
@@ -552,37 +724,58 @@ if (!me.id) {
   localStorage.setItem("airframePlayerId", me.id);
 }
 
+me.entityId = "aircraft:" + me.id;
 me.name = "P-" + me.id.slice(0, 6);
 me.color = colorFromId(me.id);
+
 playerEl.textContent = me.name + " / " + me.id.slice(0, 8);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x080d14);
+scene.fog = new THREE.Fog(0x080d14, 1200, 2800);
 
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 5000);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 6000);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
-const light = new THREE.DirectionalLight(0xffffff, 2.2);
-light.position.set(200, 600, 300);
-scene.add(light);
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(240, 700, 360);
+scene.add(sun);
 
-scene.add(new THREE.AmbientLight(0x8899aa, 0.9));
+scene.add(new THREE.AmbientLight(0x8796aa, 0.85));
 
-const grid = new THREE.GridHelper(2400, 48, 0x3c4a66, 0x1d2738);
-grid.position.y = 0;
+const grid = new THREE.GridHelper(3200, 64, 0x3c4a66, 0x1d2738);
 scene.add(grid);
 
 const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(2400, 2400),
+  new THREE.PlaneGeometry(3200, 3200),
   new THREE.MeshStandardMaterial({ color: 0x0f1722, roughness: 1 })
 );
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = -0.5;
 scene.add(floor);
+
+const axisMatX = new THREE.LineBasicMaterial({ color: 0x663333 });
+const axisMatZ = new THREE.LineBasicMaterial({ color: 0x333366 });
+
+scene.add(new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-1600, 2, 0),
+    new THREE.Vector3(1600, 2, 0)
+  ]),
+  axisMatX
+));
+
+scene.add(new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 2, -1600),
+    new THREE.Vector3(0, 2, 1600)
+  ]),
+  axisMatZ
+));
 
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -592,13 +785,12 @@ window.addEventListener("resize", () => {
 
 window.addEventListener("keydown", event => keys.add(event.key.toLowerCase()));
 window.addEventListener("keyup", event => keys.delete(event.key.toLowerCase()));
+
 roomInput.addEventListener("change", connect);
 
 function colorFromId(id) {
   let h = 0;
-  for (let i = 0; i < id.length; i++) {
-    h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  }
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return `hsl(${h % 360}, 70%, 65%)`;
 }
 
@@ -611,10 +803,15 @@ function connect() {
   if (ws) ws.close();
 
   players.clear();
-  meshes.forEach(m => scene.remove(m));
+  entities.clear();
+  histories.clear();
+
+  meshes.forEach(mesh => scene.remove(mesh));
   meshes.clear();
+
   pendingInputs = [];
   inputSeq = 0;
+  serverTick = 0;
 
   const room = roomInput.value.trim() || "main";
   const scheme = location.protocol === "https:" ? "wss" : "ws";
@@ -628,7 +825,9 @@ function connect() {
   ws.onopen = () => {
     statusEl.textContent = "connected";
     log("connected");
-    send(["j", me.id, me.name, me.color]);
+
+    send(["h", PROTOCOL_VERSION, "web"]);
+    send(["j", room, me.id, me.name, me.color]);
   };
 
   ws.onmessage = event => {
@@ -671,31 +870,36 @@ function applyPacket(packet) {
 
   const type = packet[0];
 
-  if (type === "c") {
-    log("connected to room " + packet[1]);
+  if (type === "h") {
+    serverHz = packet[2] || 60;
+    netHz = packet[3] || 20;
+    protoEl.textContent = packet[1] + " / " + serverHz + "hz / " + netHz + "net";
     return;
   }
 
   if (type === "i") {
-    const list = packet[3] || [];
     serverTick = packet[2] || 0;
     tickEl.textContent = String(serverTick);
 
-    for (const packed of list) {
-      const p = unpackPlayer(packed);
+    const playerList = packet[4] || [];
+    const entityList = packet[5] || [];
+
+    for (const packedPlayer of playerList) {
+      const p = unpackPlayer(packedPlayer);
       players.set(p.id, p);
-      ensureMesh(p);
-      if (p.id === me.id) reconcile(p);
     }
 
-    countEl.textContent = String(players.size);
-    return;
-  }
+    for (const packedEntity of entityList) {
+      const e = unpackEntity(packedEntity);
+      entities.set(e.id, e);
+      pushHistory(e.id, e);
+      ensureMesh(e);
 
-  if (type === "j") {
-    const p = unpackPlayer(packet[1]);
-    players.set(p.id, p);
-    ensureMesh(p);
+      if (e.id === me.entityId) {
+        copyEntityToMe(e);
+      }
+    }
+
     countEl.textContent = String(players.size);
     return;
   }
@@ -704,50 +908,69 @@ function applyPacket(packet) {
     serverTick = packet[1];
     tickEl.textContent = String(serverTick);
 
-    const updates = packet[2] || [];
+    for (const packed of packet[2] || []) {
+      const state = unpackDelta(packed);
+      let entity = entities.get(state.id);
 
-    for (const packed of updates) {
-      const s = unpackState(packed);
-      let p = players.get(s.id);
-
-      if (!p) {
-        p = {
-          id: s.id,
-          name: s.id.slice(0, 6),
-          color: "#e8dcc0",
-          throttleLevel: 0.45
-        };
-        players.set(s.id, p);
-        ensureMesh(p);
+      if (!entity) {
+        entity = makePlaceholderEntity(state.id);
+        entities.set(state.id, entity);
+        ensureMesh(entity);
       }
 
-      Object.assign(p, s);
+      Object.assign(entity, state);
+      pushHistory(entity.id, entity);
 
-      if (s.id === me.id) {
-        reconcile(p);
+      if (entity.id === me.entityId) {
+        reconcile(entity);
       }
     }
 
     countEl.textContent = String(players.size);
+    return;
+  }
+
+  if (type === "ev") {
+    const kind = packet[2];
+    const payload = packet[3];
+
+    if (kind === "join") {
+      const p = unpackPlayer(payload[0]);
+      const e = unpackEntity(payload[1]);
+
+      players.set(p.id, p);
+      entities.set(e.id, e);
+      pushHistory(e.id, e);
+      ensureMesh(e);
+
+      countEl.textContent = String(players.size);
+      log("joined " + p.name);
+    }
+
     return;
   }
 
   if (type === "l") {
-    const id = packet[1];
-    players.delete(id);
+    const pid = packet[1];
+    const eid = packet[2];
 
-    const mesh = meshes.get(id);
+    players.delete(pid);
+    entities.delete(eid);
+    histories.delete(eid);
+
+    const mesh = meshes.get(eid);
     if (mesh) {
       scene.remove(mesh);
-      meshes.delete(id);
+      meshes.delete(eid);
     }
 
     countEl.textContent = String(players.size);
+    log("left " + pid.slice(0, 8));
     return;
   }
 
   if (type === "e") {
-    log("server error: " + packet[1]);
+    log("server error: " + packet[1] + " " + (packet[2] || ""));
   }
 }
 
@@ -756,6 +979,19 @@ function unpackPlayer(a) {
     id: a[0],
     name: a[1],
     color: a[2],
+    entityId: a[3]
+  };
+}
+
+function unpackEntity(a) {
+  const ownerId = a[2];
+
+  return {
+    id: a[0],
+    kind: a[1],
+    ownerId,
+    name: ownerId ? "P-" + ownerId.slice(0, 6) : a[0],
+    color: ownerId && players.has(ownerId) ? players.get(ownerId).color : colorFromId(ownerId || a[0]),
     x: a[3],
     y: a[4],
     z: a[5],
@@ -765,14 +1001,22 @@ function unpackPlayer(a) {
     yaw: a[9],
     pitch: a[10],
     roll: a[11],
-    ack: a[12],
-    throttleLevel: 0.45
+    throttleLevel: a[12],
+    hp: a[13],
+    flags: a[14],
+    ack: a[15]
   };
 }
 
-function unpackState(a) {
+function unpackDelta(a) {
+  const existing = entities.get(a[0]);
+
   return {
     id: a[0],
+    kind: existing?.kind || "aircraft",
+    ownerId: existing?.ownerId || ownerFromEntityId(a[0]),
+    name: existing?.name || "P-" + ownerFromEntityId(a[0]).slice(0, 6),
+    color: existing?.color || colorFromId(ownerFromEntityId(a[0])),
     ack: a[1],
     x: a[2],
     y: a[3],
@@ -782,7 +1026,134 @@ function unpackState(a) {
     vz: a[7],
     yaw: a[8],
     pitch: a[9],
-    roll: a[10]
+    roll: a[10],
+    throttleLevel: a[11],
+    hp: a[12],
+    flags: a[13]
+  };
+}
+
+function ownerFromEntityId(id) {
+  if (typeof id === "string" && id.startsWith("aircraft:")) {
+    return id.slice("aircraft:".length);
+  }
+  return id;
+}
+
+function makePlaceholderEntity(id) {
+  const ownerId = ownerFromEntityId(id);
+
+  return {
+    id,
+    kind: "aircraft",
+    ownerId,
+    name: "P-" + ownerId.slice(0, 6),
+    color: colorFromId(ownerId),
+    x: 0,
+    y: 150,
+    z: 0,
+    vx: 0,
+    vy: 0,
+    vz: 145,
+    yaw: 0,
+    pitch: 0,
+    roll: 0,
+    throttleLevel: 0.5,
+    hp: 100,
+    flags: 0,
+    ack: 0
+  };
+}
+
+function copyEntityToMe(e) {
+  me.x = e.x;
+  me.y = e.y;
+  me.z = e.z;
+  me.vx = e.vx;
+  me.vy = e.vy;
+  me.vz = e.vz;
+  me.yaw = e.yaw;
+  me.pitch = e.pitch;
+  me.roll = e.roll;
+  me.throttleLevel = e.throttleLevel;
+  me.hp = e.hp;
+  me.flags = e.flags;
+  me.ack = e.ack;
+  entities.set(me.entityId, meEntity());
+}
+
+function meEntity() {
+  return {
+    id: me.entityId,
+    kind: "aircraft",
+    ownerId: me.id,
+    name: me.name,
+    color: me.color,
+    x: me.x,
+    y: me.y,
+    z: me.z,
+    vx: me.vx,
+    vy: me.vy,
+    vz: me.vz,
+    yaw: me.yaw,
+    pitch: me.pitch,
+    roll: me.roll,
+    throttleLevel: me.throttleLevel,
+    hp: me.hp,
+    flags: me.flags,
+    ack: me.ack
+  };
+}
+
+function pushHistory(id, e) {
+  if (id === me.entityId) return;
+
+  const h = histories.get(id) || [];
+
+  h.push({
+    t: performance.now(),
+    x: e.x,
+    y: e.y,
+    z: e.z,
+    yaw: e.yaw,
+    pitch: e.pitch,
+    roll: e.roll
+  });
+
+  while (h.length > 16) h.shift();
+  histories.set(id, h);
+}
+
+function sampleRemote(id) {
+  const entity = entities.get(id);
+  const h = histories.get(id);
+
+  if (!entity || !h || h.length < 2) return entity;
+
+  const target = performance.now() - INTERP_DELAY;
+
+  let a = h[0];
+  let b = h[h.length - 1];
+
+  for (let i = 0; i < h.length - 1; i++) {
+    if (h[i].t <= target && h[i + 1].t >= target) {
+      a = h[i];
+      b = h[i + 1];
+      break;
+    }
+  }
+
+  const span = Math.max(1, b.t - a.t);
+  const f = clamp((target - a.t) / span, 0, 1);
+
+  return {
+    ...entity,
+    x: lerp(a.x, b.x, f),
+    y: lerp(a.y, b.y, f),
+    z: lerp(a.z, b.z, f),
+    yaw: lerpAngle(a.yaw, b.yaw, f),
+    pitch: lerp(a.pitch, b.pitch, f),
+    roll: lerp(a.roll, b.roll, f)
   };
 }
 
@@ -814,70 +1185,132 @@ function getInput() {
   };
 }
 
-function reconcile(authoritative) {
-  const ack = authoritative.ack || 0;
+function reconcile(serverEntity) {
+  const beforeX = me.x;
+  const beforeY = me.y;
+  const beforeZ = me.z;
 
-  pendingInputs = pendingInputs.filter(input => input.seq > ack);
+  pendingInputs = pendingInputs.filter(input => input.seq > serverEntity.ack);
 
-  me.x = authoritative.x;
-  me.y = authoritative.y;
-  me.z = authoritative.z;
-  me.vx = authoritative.vx;
-  me.vy = authoritative.vy;
-  me.vz = authoritative.vz;
-  me.yaw = authoritative.yaw;
-  me.pitch = authoritative.pitch;
-  me.roll = authoritative.roll;
-  me.ack = authoritative.ack;
+  copyEntityToMe(serverEntity);
 
   for (const input of pendingInputs) {
     simulate(me, input, FIXED_DT);
   }
 
-  players.set(me.id, me);
+  correctionError = Math.hypot(me.x - beforeX, me.y - beforeY, me.z - beforeZ);
+  errorEl.textContent = correctionError.toFixed(3);
+  pendingEl.textContent = String(pendingInputs.length);
+
+  entities.set(me.entityId, meEntity());
 }
 
 function simulate(p, input, dt) {
-  p.throttleLevel = clamp((p.throttleLevel ?? 0.45) + input.throttle * dt * 0.65, 0, 1);
+  p.throttleLevel = clamp((p.throttleLevel ?? 0.50) + input.throttle * dt * 0.65, 0, 1);
 
-  p.yaw += input.yaw * 1.45 * dt;
-  p.pitch = clamp(p.pitch + input.pitch * 0.9 * dt, -0.75, 0.75);
-  p.roll += input.roll * 3.2 * dt;
-  p.roll *= 0.94;
+  p.yaw += input.yaw * 1.55 * dt;
+  p.pitch = clamp(p.pitch + input.pitch * 0.95 * dt, -0.80, 0.80);
+  p.roll += input.roll * 3.6 * dt;
+  p.roll *= 0.935;
 
-  const speed = 80 + p.throttleLevel * 240;
+  const speed = 90 + p.throttleLevel * 250;
 
   const cp = Math.cos(p.pitch);
   const fx = Math.cos(p.yaw) * cp;
   const fy = Math.sin(p.pitch);
   const fz = Math.sin(p.yaw) * cp;
 
-  const tx = fx * speed;
-  const ty = fy * speed;
-  const tz = fz * speed;
+  const targetVx = fx * speed;
+  const targetVy = fy * speed;
+  const targetVz = fz * speed;
 
-  const blend = 0.10;
+  const blend = 0.11;
 
-  p.vx += (tx - p.vx) * blend;
-  p.vy += (ty - p.vy) * blend;
-  p.vz += (tz - p.vz) * blend;
+  p.vx += (targetVx - p.vx) * blend;
+  p.vy += (targetVy - p.vy) * blend;
+  p.vz += (targetVz - p.vz) * blend;
 
   p.x += p.vx * dt;
   p.y += p.vy * dt;
   p.z += p.vz * dt;
 
-  p.x = wrap(p.x, -1200, 1200);
-  p.z = wrap(p.z, -1200, 1200);
+  p.x = wrap(p.x, -1600, 1600);
+  p.z = wrap(p.z, -1600, 1600);
 
   if (p.y < 35) {
     p.y = 35;
     p.vy = Math.max(0, p.vy);
   }
 
-  if (p.y > 900) {
-    p.y = 900;
+  if (p.y > 1000) {
+    p.y = 1000;
     p.vy = Math.min(0, p.vy);
   }
+}
+
+function ensureMesh(e) {
+  if (meshes.has(e.id)) return meshes.get(e.id);
+
+  const group = new THREE.Group();
+
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(e.color || "#e8dcc0"),
+    roughness: 0.7,
+    metalness: 0.1
+  });
+
+  const body = new THREE.Mesh(new THREE.ConeGeometry(8, 36, 4), material);
+  body.rotation.x = Math.PI / 2;
+  group.add(body);
+
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(44, 2, 8), material);
+  wing.position.z = -2;
+  group.add(wing);
+
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(16, 2, 8), material);
+  tail.position.z = -16;
+  group.add(tail);
+
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(3, 12, 7), material);
+  fin.position.z = -16;
+  fin.position.y = 5;
+  group.add(fin);
+
+  meshes.set(e.id, group);
+  scene.add(group);
+
+  return group;
+}
+
+function updateMeshes() {
+  entities.set(me.entityId, meEntity());
+
+  for (const [id, entity] of entities.entries()) {
+    const drawEntity = id === me.entityId ? meEntity() : sampleRemote(id);
+    if (!drawEntity) continue;
+
+    const mesh = ensureMesh(drawEntity);
+
+    mesh.position.set(drawEntity.x, drawEntity.y, drawEntity.z);
+    mesh.rotation.order = "YXZ";
+    mesh.rotation.y = -drawEntity.yaw + Math.PI / 2;
+    mesh.rotation.x = drawEntity.pitch;
+    mesh.rotation.z = drawEntity.roll;
+  }
+}
+
+function updateCamera() {
+  const back = 190;
+  const up = 82;
+
+  const fx = Math.cos(me.yaw) * Math.cos(me.pitch);
+  const fz = Math.sin(me.yaw) * Math.cos(me.pitch);
+
+  camera.position.x = me.x - fx * back;
+  camera.position.y = me.y + up;
+  camera.position.z = me.z - fz * back;
+
+  camera.lookAt(me.x, me.y + 22, me.z);
 }
 
 function clamp(v, lo, hi) {
@@ -891,88 +1324,32 @@ function wrap(v, lo, hi) {
   return v;
 }
 
-function ensureMesh(p) {
-  if (meshes.has(p.id)) return meshes.get(p.id);
-
-  const group = new THREE.Group();
-
-  const material = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(p.color || "#e8dcc0"),
-    roughness: 0.7,
-    metalness: 0.1
-  });
-
-  const body = new THREE.Mesh(
-    new THREE.ConeGeometry(8, 34, 4),
-    material
-  );
-  body.rotation.x = Math.PI / 2;
-  group.add(body);
-
-  const wing = new THREE.Mesh(
-    new THREE.BoxGeometry(36, 2, 8),
-    material
-  );
-  wing.position.z = -2;
-  group.add(wing);
-
-  const tail = new THREE.Mesh(
-    new THREE.BoxGeometry(14, 2, 8),
-    material
-  );
-  tail.position.z = -15;
-  group.add(tail);
-
-  const label = document.createElement("canvas");
-
-  meshes.set(p.id, group);
-  scene.add(group);
-
-  return group;
+function lerp(a, b, f) {
+  return a + (b - a) * f;
 }
 
-function updateMeshes() {
-  for (const [id, p] of players.entries()) {
-    const mesh = ensureMesh(p);
-
-    mesh.position.set(p.x, p.y, p.z);
-    mesh.rotation.order = "YXZ";
-    mesh.rotation.y = -p.yaw + Math.PI / 2;
-    mesh.rotation.x = p.pitch;
-    mesh.rotation.z = p.roll;
-  }
-}
-
-function updateCamera() {
-  const p = me;
-
-  const back = 170;
-  const up = 75;
-
-  const fx = Math.cos(p.yaw) * Math.cos(p.pitch);
-  const fz = Math.sin(p.yaw) * Math.cos(p.pitch);
-
-  camera.position.x = p.x - fx * back;
-  camera.position.y = p.y + up;
-  camera.position.z = p.z - fz * back;
-
-  camera.lookAt(p.x, p.y + 18, p.z);
+function lerpAngle(a, b, f) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * f;
 }
 
 let lastFrame = performance.now();
 
 function frame(now) {
-  const dt = Math.min((now - lastFrame) / 1000, 0.05);
   lastFrame = now;
 
-  if (now - lastInputSend > 1000 / SERVER_HZ) {
+  if (now - lastInputSend > 1000 / CLIENT_PREDICT_HZ) {
     lastInputSend = now;
 
     const input = getInput();
+
     pendingInputs.push(input);
+    if (pendingInputs.length > 120) pendingInputs.shift();
 
     simulate(me, input, FIXED_DT);
-    players.set(me.id, me);
+    entities.set(me.entityId, meEntity());
 
     send([
       "in",
