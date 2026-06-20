@@ -102,7 +102,7 @@ export class GameEngine {
   public team2Score = 0;
   public matchTimer = 360;
   public matchEnded = false;
-  private physicsAccumulator = 0;
+
 
   public xpEarnedThisMatch = 0;
   public targetsDestroyedThisMatch = 0;
@@ -527,25 +527,26 @@ export class GameEngine {
       return;
     }
 
-    const fixedDt = 0.01; // 100Hz fixed physics step
-    this.physicsAccumulator += dt;
-    this.physicsAccumulator = Math.min(this.physicsAccumulator, 0.1); // Guard against "death spiral"
+    const maxSubStep = 0.01; // 100Hz max physics step
+    let timeLeft = Math.min(0.1, dt); // clamp total dt to guard against death spiral
 
-    while (this.physicsAccumulator >= fixedDt) {
-      this.tickPilotCooldowns(fixedDt);
+    while (timeLeft > 0) {
+      const step = Math.min(maxSubStep, timeLeft);
+
+      this.tickPilotCooldowns(step);
 
       const player = this.pilots.find(p => p.id === "player") as EnginePilot | undefined;
 
       if (player) {
         if (player.damage.fuselage <= 0) {
-          this.updateDeadPilot(player, fixedDt);
+          this.updateDeadPilot(player, step);
         } else {
           const controller = this.getOrCreateController(player.id);
-          const command = controller.update(player, inputFrame, playerMouseTarget, fixedDt);
+          const command = controller.update(player, inputFrame, playerMouseTarget, step);
           player.lastCommand = command;
-          FlightPhysicsEngine.update(player, command, fixedDt, this.selectedMapId);
-          this.enforceMapBoundary(player, fixedDt);
-          this.handleWeaponFiring(player, command.primaryFire, command.secondaryFire, fixedDt);
+          FlightPhysicsEngine.update(player, command, step, this.selectedMapId);
+          this.enforceMapBoundary(player, step);
+          this.handleWeaponFiring(player, command.primaryFire, command.secondaryFire, step);
         }
       }
 
@@ -555,18 +556,18 @@ export class GameEngine {
         const pilot = p as EnginePilot;
 
         if (pilot.damage.fuselage <= 0) {
-          this.updateDeadPilot(pilot, fixedDt);
+          this.updateDeadPilot(pilot, step);
         } else {
           if (pilot.isBot) {
             if (this.isMultiplayer && !this.isHost) {
               // In multiplayer, remote non-host clients let the host synchronize bot positions
-              pilot.x += pilot.vx * fixedDt;
-              pilot.y += pilot.vy * fixedDt;
-              pilot.z += pilot.vz * fixedDt;
+              pilot.x += pilot.vx * step;
+              pilot.y += pilot.vy * step;
+              pilot.z += pilot.vz * step;
               return;
             }
 
-            this.runAIConsensus(pilot, fixedDt);
+            this.runAIConsensus(pilot, step);
 
             const botInput = createEmptyInputFrame();
             const botTarget = pilot.aiState
@@ -578,24 +579,24 @@ export class GameEngine {
               : null;
 
             const controller = this.getOrCreateController(pilot.id);
-            const command = controller.update(pilot, botInput, botTarget, fixedDt);
+            const command = controller.update(pilot, botInput, botTarget, step);
             pilot.lastCommand = command;
-            FlightPhysicsEngine.update(pilot, command, fixedDt, this.selectedMapId);
-            this.enforceMapBoundary(pilot, fixedDt);
+            FlightPhysicsEngine.update(pilot, command, step, this.selectedMapId);
+            this.enforceMapBoundary(pilot, step);
           } else {
             // Remote player linear extrapolation
-            pilot.x += pilot.vx * fixedDt;
-            pilot.y += pilot.vy * fixedDt;
-            pilot.z += pilot.vz * fixedDt;
+            pilot.x += pilot.vx * step;
+            pilot.y += pilot.vy * step;
+            pilot.z += pilot.vz * step;
           }
         }
       });
 
-      this.updateProjectiles(fixedDt);
-      this.updateGroundDefense(fixedDt);
-      this.updateCaptureZones(fixedDt);
+      this.updateProjectiles(step);
+      this.updateGroundDefense(step);
+      this.updateCaptureZones(step);
 
-      this.physicsAccumulator -= fixedDt;
+      timeLeft -= step;
     }
 
     this.updateCampaignMission();

@@ -35,7 +35,8 @@ export async function loadHeightmap(
       resolve(data);
     };
     img.onerror = () => reject(new Error(`Failed to load heightmap: ${path}`));
-    img.src = path;
+    const baseUrl = ((import.meta as any).env.BASE_URL || "/").replace(/\/$/, "");
+    img.src = path.startsWith("http") ? path : `${baseUrl}${path}`;
   });
 }
 

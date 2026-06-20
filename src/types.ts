@@ -93,6 +93,8 @@ export interface Modification {
     cd0?: number;          // absolute delta to CDo
     rollRate?: number;
     durability?: number;
+    damage?: number;       // fractional change
+    dispersion?: number;   // fractional change
   };
 }
 

@@ -29,6 +29,7 @@ import { DEFAULT_AIRCRAFT } from "./game/aircraftData";
 import { MAP_REGISTRY } from "./game/content/maps/registry";
 import { KnownMaps } from "./game/content/maps/mapTypes";
 import { FlightPhysicsEngine } from "./game/flightModel";
+import { loadHeightmap } from "./game/terrainModel";
 import { Vector3, Quaternion, Euler } from "three";
 import { Award, Trophy, ArrowRight } from "lucide-react";
 
@@ -257,7 +258,7 @@ export default function App() {
     }, 150);
   };
 
-  const initThreeAndGame = (
+  const initThreeAndGame = async (
     planeId: string,
     belt: AmmoBelt,
     mods: string[],
@@ -270,6 +271,15 @@ export default function App() {
     if (!canvasContainerRef.current) return;
 
     const mapDef = MAP_REGISTRY[mapId] ?? MAP_REGISTRY[KnownMaps.IslandChain];
+
+    // Pre-load heightmap before instantiating GameEngine so spawn calculations are correct
+    if (mapDef.terrain.kind === "heightmap") {
+      try {
+        await loadHeightmap(mapDef.terrain.path, mapDef.world.radius, mapDef.terrain.elevationScale);
+      } catch (e) {
+        console.error("Failed to pre-load heightmap:", e);
+      }
+    }
 
     // 1. Initialize 3D Renderer
     const renderer3D = new WorldRenderer(canvasContainerRef.current, mapDef, () => {

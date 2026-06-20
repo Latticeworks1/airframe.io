@@ -9,6 +9,7 @@ import { AerodynamicsEngine } from "./aeroSurfaceModel";
 import { getTerrainHeight } from "./terrainModel";
 import { MAP_REGISTRY } from "./content/maps/registry";
 import { KnownMaps } from "./content/maps/mapTypes";
+import { MODIFICATIONS } from "./content/modifications/modificationData";
 import {
   LOCAL_FORWARD,
   LOCAL_UP,
@@ -84,20 +85,24 @@ export function applyModifications(
   const modified = { ...specs };
 
   equippedIds.forEach(id => {
-    if (id === "fuel-heavy") {
-      modified.maxThrust *= 1.12;
-      modified.durability *= 0.95;
-    } else if (id === "engine-polishing") {
-      modified.cd0 *= 0.94;
-    } else if (id === "stripped-frame") {
-      modified.mass *= 0.92;
-      modified.durability *= 0.9;
-    } else if (id === "reinforced-skin") {
-      modified.durability *= 1.2;
-      modified.mass *= 1.05;
-      modified.cd0 *= 1.02;
-    } else if (id === "polished-guns") {
-      modified.rollRateDegPerSec = (modified.rollRateDegPerSec ?? 90) * 1.1;
+    const mod = MODIFICATIONS.find(m => m.id === id);
+    if (!mod) return;
+
+    const eff = mod.effects;
+    if (eff.maxThrust !== undefined) {
+      modified.maxThrust *= (1 + eff.maxThrust);
+    }
+    if (eff.mass !== undefined) {
+      modified.mass *= (1 + eff.mass);
+    }
+    if (eff.cd0 !== undefined) {
+      modified.cd0 = Math.max(0.001, modified.cd0 + eff.cd0);
+    }
+    if (eff.durability !== undefined) {
+      modified.durability *= (1 + eff.durability);
+    }
+    if (eff.rollRate !== undefined) {
+      modified.rollRateDegPerSec = (modified.rollRateDegPerSec ?? 90) * (1 + eff.rollRate);
     }
   });
 
@@ -321,16 +326,16 @@ export function updateFlightPhysics(
   pilot.roll = wrapPi(nextEuler.z);
 
   // Takeoff & rollout attitude stabilization: prevent wings dipping or nose diving below takeoff speed on ground
-  const terrainCheckForAttitude = getTerrainHeight(pos.y > 0 ? pos.x : pos.x, pos.y > 0 ? pos.z : pos.z, mapId);
+  const terrainCheckForAttitude = getTerrainHeight(pos.x, pos.z, mapId);
   if (pos.y <= terrainCheckForAttitude.height + 1.2 && speed * 3.6 < 130) {
     pilot.pitch = MathUtils.clamp(pilot.pitch, -0.01, 0.05); // slight positive nose lift permitted, no tuck or extreme pitch
     pilot.roll = 0; // maintain wings level on takeoff run
   }
 
   // Store angular rates back into the pilot's kinematic registers
-  pilot.avx = finalPitchRate; // X is pitch
-  pilot.avy = finalYawRate;   // Y is yaw
-  pilot.avz = finalRollRate;  // Z is roll
+  pilot.avx = totalPitchRate; // X is pitch
+  pilot.avy = totalYawRate;   // Y is yaw
+  pilot.avz = totalRollRate;  // Z is roll
 
   // Recalculate 3D basis vectors
   ({ q, forward } = getAircraftBasis(

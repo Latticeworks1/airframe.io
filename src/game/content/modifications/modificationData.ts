@@ -44,7 +44,7 @@ export const MODIFICATIONS: Modification[] = [
     description:
       "Maximizes firearm energy. Slightly elevates weapon spread but increases standard structural tearing damage.",
     slot: ModificationSlot.Weapon,
-    effects: {}
+    effects: { damage: 0.25, dispersion: 0.40 }
   },
   {
     id: "polished-guns",
@@ -52,6 +52,6 @@ export const MODIFICATIONS: Modification[] = [
     description:
       "Precision-aligned gun mounts reduce wing aerodynamic interference, increasing aileron authority by 10%.",
     slot: ModificationSlot.Weapon,
-    effects: {}
+    effects: { rollRate: 0.10 }
   }
 ];
