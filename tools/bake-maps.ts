@@ -30,13 +30,61 @@ function calculateGoogleMapsZoom(lat: number, radius: number): number {
   return Math.max(0, Math.min(21, Math.round(zoom)));
 }
 
+async function fetchElevationsOpenMeteo(
+  points: { lat: number; lon: number }[]
+): Promise<Float32Array> {
+  const elevations = new Float32Array(points.length);
+  const batchSize = 100; // Open-Meteo supports up to 100 coordinates per request
+
+  for (let i = 0; i < points.length; i += batchSize) {
+    const batch = points.slice(i, i + batchSize);
+    const lats = batch.map(p => p.lat.toFixed(6)).join(",");
+    const lons = batch.map(p => p.lon.toFixed(6)).join(",");
+    const url = `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`;
+
+    let success = false;
+    let retries = 5;
+    while (!success && retries > 0) {
+      try {
+        const res = await fetch(url);
+        if (res.status === 429) {
+          console.warn("  Open-Meteo Rate Limited (429). Aborting and falling back to procedural generation…");
+          throw new Error("RATE_LIMITED");
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json() as { elevation?: number[] };
+        if (!data.elevation || data.elevation.length !== batch.length) {
+          throw new Error(`Incomplete results: expected ${batch.length}, got ${data.elevation?.length ?? 0}`);
+        }
+        for (let j = 0; j < data.elevation.length; j++) {
+          elevations[i + j] = data.elevation[j];
+        }
+        success = true;
+      } catch (e: any) {
+        if (e.message === "RATE_LIMITED") {
+          throw e;
+        }
+        retries--;
+        console.warn(`  Open-Meteo Batch failed: ${e.message}. Retrying (${retries} left)…`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    }
+    if (!success) {
+      throw new Error(`Failed to fetch elevations from Open-Meteo at batch starting from index ${i}`);
+    }
+    // Rate limit prevention: 1000ms delay between batches
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  return elevations;
+}
+
 async function fetchElevations(
   minLat: number,
   maxLat: number,
   minLon: number,
   maxLon: number,
   gridSize: number,
-  apiKey: string
+  apiKey?: string
 ): Promise<Float32Array> {
   const points: { lat: number; lon: number }[] = [];
   const stepLat = (maxLat - minLat) / (gridSize - 1);
@@ -50,44 +98,34 @@ async function fetchElevations(
     }
   }
 
-  const elevations = new Float32Array(gridSize * gridSize);
-  const batchSize = 512;
-
-  for (let i = 0; i < points.length; i += batchSize) {
-    const batch = points.slice(i, i + batchSize);
-    const locString = batch.map(p => `${p.lat.toFixed(6)},${p.lon.toFixed(6)}`).join("|");
-    const url = `https://maps.googleapis.com/maps/api/elevation/json?locations=${encodeURIComponent(locString)}&key=${apiKey}`;
-
-    let success = false;
-    let retries = 3;
-    while (!success && retries > 0) {
-      try {
+  if (apiKey) {
+    console.log("  Attempting to fetch elevations via Google Maps Elevation API…");
+    try {
+      const elevations = new Float32Array(gridSize * gridSize);
+      const batchSize = 512;
+      for (let i = 0; i < points.length; i += batchSize) {
+        const batch = points.slice(i, i + batchSize);
+        const locString = batch.map(p => `${p.lat.toFixed(6)},${p.lon.toFixed(6)}`).join("|");
+        const url = `https://maps.googleapis.com/maps/api/elevation/json?locations=${encodeURIComponent(locString)}&key=${apiKey}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json() as { results?: { elevation: number }[], status: string, error_message?: string };
         if (data.status !== "OK") {
           throw new Error(`API error: ${data.status} ${data.error_message || ""}`);
         }
-        if (!data.results || data.results.length !== batch.length) {
-          throw new Error(`Incomplete results: expected ${batch.length}, got ${data.results?.length ?? 0}`);
-        }
         for (let j = 0; j < data.results.length; j++) {
           elevations[i + j] = data.results[j].elevation;
         }
-        success = true;
-      } catch (e: any) {
-        retries--;
-        console.warn(`  Batch ${i / batchSize + 1} failed: ${e.message}. Retrying (${retries} left)…`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 150));
       }
+      return elevations;
+    } catch (e: any) {
+      console.warn(`  Google Elevation API failed: ${e.message}. Falling back to Open-Meteo API…`);
     }
-    if (!success) {
-      throw new Error(`Failed to fetch elevations after retries at batch starting from index ${i}`);
-    }
-    await new Promise(resolve => setTimeout(resolve, 150));
   }
 
-  return elevations;
+  console.log("  Fetching elevations via Open-Meteo Elevation API (Free, no key required)…");
+  return fetchElevationsOpenMeteo(points);
 }
 
 // Ramer-Douglas-Peucker simplification on flat interleaved [x,y,...] array
@@ -172,11 +210,11 @@ for (const mapDef of Object.values(MAP_REGISTRY)) {
   const { id, tileOrigin, world } = mapDef;
   const outFile = path.join(OUT_DIR, `${id}.geom.json`);
 
-  const satFile = path.join(OUT_DIR, `${id}.satellite.png`);
+  const heightmapFile = path.join(OUT_DIR, `${id}.png`);
   const hasGeom = fs.existsSync(outFile);
-  const hasSat  = !process.env.GOOGLE_MAPS_API_KEY || fs.existsSync(satFile);
+  const hasHeightmap = fs.existsSync(heightmapFile);
 
-  if (hasGeom && hasSat) {
+  if (hasGeom && hasHeightmap) {
     console.log(`${id}: already baked, skipping (delete to re-bake)`);
     continue;
   }
@@ -189,7 +227,8 @@ for (const mapDef of Object.values(MAP_REGISTRY)) {
   const maxLon    = tileOrigin.lon + halfDeg / Math.cos(tileOrigin.lat * Math.PI / 180);
   const bbox      = `${minLat},${minLon},${maxLat},${maxLon}`;
 
-  const ql = `
+  if (!hasGeom) {
+    const ql = `
 [out:json][timeout:90];
 (
   way["natural"~"^(water|coastline)$"](${bbox});
@@ -204,155 +243,203 @@ for (const mapDef of Object.values(MAP_REGISTRY)) {
 out body;
 >;
 out skel qt;
-  `.trim();
+    `.trim();
 
-  console.log(`Baking ${id} (bbox ${bbox})…`);
-  let data: OsmResponse;
-  try {
-    data = await queryOverpass(ql);
-  } catch (e: any) {
-    console.error(`  Overpass failed for ${id}: ${e.message}`);
-    continue;
-  }
-
-  const nodes    = buildNodeMap(data.elements);
-  const ways     = data.elements.filter((el): el is OsmWay => "nodes" in el);
-  const epsilon  = 0.003; // simplification threshold in normalized space
-
-  const geom: BakedMapGeometry = {
-    version:    1,
-    waterRings: [],
-    landUse:    [],
-    roads:      [],
-    runways:    [],
-    ports:      [],
-  };
-
-  for (const way of ways) {
-    const pts = wayToNorm(way, nodes, minLat, maxLat, minLon, maxLon);
-    if (!pts) continue;
-    const tags = way.tags ?? {};
-
-    if (tags["natural"] === "water" || tags["natural"] === "coastline") {
-      const s = rdp(pts, epsilon);
-      if (s.length >= 6) geom.waterRings.push(s);
-      continue;
-    }
-
-    const landuse = tags["landuse"];
-    if (landuse === "forest" || landuse === "scrub") {
-      const s = rdp(pts, epsilon);
-      if (s.length >= 6) geom.landUse.push({ kind: landuse === "scrub" ? "scrub" : "forest", ring: s });
-      continue;
-    }
-    if (landuse === "residential" || landuse === "commercial" || landuse === "industrial") {
-      const s = rdp(pts, epsilon);
-      if (s.length >= 6) geom.landUse.push({ kind: "urban", ring: s });
-      continue;
-    }
-    if (landuse === "farmland") {
-      const s = rdp(pts, epsilon);
-      if (s.length >= 6) geom.landUse.push({ kind: "farmland", ring: s });
-      continue;
-    }
-
-    const hw = tags["highway"];
-    if (hw === "motorway" || hw === "trunk") {
-      const s = rdp(pts, epsilon * 0.5);
-      if (s.length >= 4) geom.roads.push({ kind: "motorway", pts: s });
-      continue;
-    }
-    if (hw === "primary") {
-      const s = rdp(pts, epsilon);
-      if (s.length >= 4) geom.roads.push({ kind: "primary", pts: s });
-      continue;
-    }
-    if (hw === "secondary") {
-      const s = rdp(pts, epsilon * 1.5);
-      if (s.length >= 4) geom.roads.push({ kind: "secondary", pts: s });
-      continue;
-    }
-    if (hw === "tertiary") {
-      const s = rdp(pts, epsilon * 2);
-      if (s.length >= 4) geom.roads.push({ kind: "tertiary", pts: s });
-      continue;
-    }
-    if (hw === "track") {
-      const s = rdp(pts, epsilon * 3);
-      if (s.length >= 4) geom.roads.push({ kind: "track", pts: s });
-      continue;
-    }
-
-    if (tags["aeroway"] === "runway") {
-      if (pts.length < 4) continue;
-      // Compute center and heading from first and last node
-      const x0 = pts[0], y0 = pts[1];
-      const xN = pts[pts.length - 2], yN = pts[pts.length - 1];
-      const cx = (x0 + xN) / 2, cy = (y0 + yN) / 2;
-      const heading = Math.atan2(xN - x0, yN - y0) * 180 / Math.PI;
-      const length  = Math.hypot(xN - x0, yN - y0);
-      geom.runways.push({ cx, cy, heading, length, width: length * 0.04 });
-    }
-  }
-
-  // Harbour / ferry terminal nodes
-  for (const el of data.elements) {
-    if (!("lat" in el)) continue;
-    const n = el as OsmNode & { tags?: Record<string, string> };
-    if (!n.tags) continue;
-    if (n.tags["harbour"] === "yes" || n.tags["amenity"] === "ferry_terminal") {
-      const x = (n.lon - minLon) / (maxLon - minLon);
-      const y = (n.lat - minLat) / (maxLat - minLat);
-      geom.ports.push({ x, y });
-    }
-  }
-
-  const json = JSON.stringify(geom);
-  fs.writeFileSync(outFile, json);
-  const kb = (Buffer.byteLength(json) / 1024).toFixed(1);
-  console.log(`  -> ${outFile} (${kb} KB, ${geom.waterRings.length} water rings, ${geom.roads.length} roads, ${geom.runways.length} runways)`);
-
-  // Download Google Maps elevation data if GOOGLE_MAPS_API_KEY is available
-  const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
-  if (GOOGLE_MAPS_API_KEY) {
-    const heightmapFile = path.join(OUT_DIR, `${id}.png`);
-    console.log(`  Baking elevation heightmap for ${id} via Google Elevation API…`);
+    console.log(`Baking ${id} geometry (bbox ${bbox})…`);
+    let data: OsmResponse;
     try {
-      const gridSize = 128;
-      const elevations = await fetchElevations(minLat, maxLat, minLon, maxLon, gridSize, GOOGLE_MAPS_API_KEY);
-      
-      let maxH = 10;
-      for (let i = 0; i < elevations.length; i++) {
-        if (elevations[i] < 0) elevations[i] = 0;
-        if (elevations[i] > maxH) maxH = elevations[i];
-      }
+      data = await queryOverpass(ql);
+      const nodes    = buildNodeMap(data.elements);
+      const ways     = data.elements.filter((el): el is OsmWay => "nodes" in el);
+      const epsilon  = 0.003; // simplification threshold in normalized space
 
-      const pixels = new Uint8Array(gridSize * gridSize * 4);
-      for (let i = 0; i < elevations.length; i++) {
-        const val = Math.min(255, Math.max(0, Math.round((elevations[i] / maxH) * 255)));
-        const idx = i * 4;
-        pixels[idx]     = val; // R
-        pixels[idx + 1] = val; // G
-        pixels[idx + 2] = val; // B
-        pixels[idx + 3] = 255; // A
-      }
+      const geom: BakedMapGeometry = {
+        version:    1,
+        waterRings: [],
+        landUse:    [],
+        roads:      [],
+        runways:    [],
+        ports:      [],
+      };
 
-      const sharp = (await import("sharp")).default;
-      await sharp(Buffer.from(pixels), {
-        raw: {
-          width: gridSize,
-          height: gridSize,
-          channels: 4
+      for (const way of ways) {
+        const pts = wayToNorm(way, nodes, minLat, maxLat, minLon, maxLon);
+        if (!pts) continue;
+        const tags = way.tags ?? {};
+
+        if (tags["natural"] === "water" || tags["natural"] === "coastline") {
+          const s = rdp(pts, epsilon);
+          if (s.length >= 6) geom.waterRings.push(s);
+          continue;
         }
-      })
-        .png()
-        .toFile(heightmapFile + ".tmp");
 
-      fs.renameSync(heightmapFile + ".tmp", heightmapFile);
-      console.log(`  [Success] Saved elevation heightmap to ${heightmapFile} (max elevation: ${Math.round(maxH)}m)`);
+        const landuse = tags["landuse"];
+        if (landuse === "forest" || landuse === "scrub") {
+          const s = rdp(pts, epsilon);
+          if (s.length >= 6) geom.landUse.push({ kind: landuse === "scrub" ? "scrub" : "forest", ring: s });
+          continue;
+        }
+        if (landuse === "residential" || landuse === "commercial" || landuse === "industrial") {
+          const s = rdp(pts, epsilon);
+          if (s.length >= 6) geom.landUse.push({ kind: "urban", ring: s });
+          continue;
+        }
+        if (landuse === "farmland") {
+          const s = rdp(pts, epsilon);
+          if (s.length >= 6) geom.landUse.push({ kind: "farmland", ring: s });
+          continue;
+        }
+
+        const hw = tags["highway"];
+        if (hw === "motorway" || hw === "trunk") {
+          const s = rdp(pts, epsilon * 0.5);
+          if (s.length >= 4) geom.roads.push({ kind: "motorway", pts: s });
+          continue;
+        }
+        if (hw === "primary") {
+          const s = rdp(pts, epsilon);
+          if (s.length >= 4) geom.roads.push({ kind: "primary", pts: s });
+          continue;
+        }
+        if (hw === "secondary") {
+          const s = rdp(pts, epsilon * 1.5);
+          if (s.length >= 4) geom.roads.push({ kind: "secondary", pts: s });
+          continue;
+        }
+        if (hw === "tertiary") {
+          const s = rdp(pts, epsilon * 2);
+          if (s.length >= 4) geom.roads.push({ kind: "tertiary", pts: s });
+          continue;
+        }
+        if (hw === "track") {
+          const s = rdp(pts, epsilon * 3);
+          if (s.length >= 4) geom.roads.push({ kind: "track", pts: s });
+          continue;
+        }
+
+        if (tags["aeroway"] === "runway") {
+          if (pts.length < 4) continue;
+          // Compute center and heading from first and last node
+          const x0 = pts[0], y0 = pts[1];
+          const xN = pts[pts.length - 2], yN = pts[pts.length - 1];
+          const cx = (x0 + xN) / 2, cy = (y0 + yN) / 2;
+          const heading = Math.atan2(xN - x0, yN - y0) * 180 / Math.PI;
+          const length  = Math.hypot(xN - x0, yN - y0);
+          geom.runways.push({ cx, cy, heading, length, width: length * 0.04 });
+        }
+      }
+
+      // Harbour / ferry terminal nodes
+      for (const el of data.elements) {
+        if (!("lat" in el)) continue;
+        const n = el as OsmNode & { tags?: Record<string, string> };
+        if (!n.tags) continue;
+        if (n.tags["harbour"] === "yes" || n.tags["amenity"] === "ferry_terminal") {
+          const x = (n.lon - minLon) / (maxLon - minLon);
+          const y = (n.lat - minLat) / (maxLat - minLat);
+          geom.ports.push({ x, y });
+        }
+      }
+
+      const json = JSON.stringify(geom);
+      fs.writeFileSync(outFile, json);
+      const kb = (Buffer.byteLength(json) / 1024).toFixed(1);
+      console.log(`  -> ${outFile} (${kb} KB, ${geom.waterRings.length} water rings, ${geom.roads.length} roads, ${geom.runways.length} runways)`);
     } catch (e: any) {
-      console.error(`  Google Maps Elevation API query failed for ${id}: ${e.message}`);
+      console.error(`  Overpass failed for ${id}: ${e.message}`);
     }
+  } else {
+    console.log(`  [Info] ${id}.geom.json already exists, skipping Overpass query.`);
+  }
+
+  // Bake elevation heightmap (uses Google Maps Elevation API if key is available, falls back to Open-Meteo or procedural)
+  const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+  console.log(`  Baking elevation heightmap for ${id}…`);
+  const gridSize = 32;
+  let elevations: Float32Array;
+  try {
+    elevations = await fetchElevations(minLat, maxLat, minLon, maxLon, gridSize, GOOGLE_MAPS_API_KEY);
+  } catch (e: any) {
+    console.warn(`  Elevation API query failed for ${id}: ${e.message}. Generating high-quality procedural fallback heightmap instead…`);
+    elevations = new Float32Array(gridSize * gridSize);
+    
+    // Seed-based procedural heightmap generator
+    const seed = mapDef.seed || 1111;
+    function random(x: number, y: number) {
+      const sx = Math.sin(x * 12.9898 + y * 78.233 + seed) * 43758.5453;
+      return sx - Math.floor(sx);
+    }
+    const noise = (x: number, y: number) => {
+      const ix = Math.floor(x), iy = Math.floor(y);
+      const fx = x - ix, fy = y - iy;
+      const a = random(ix, iy), b = random(ix + 1, iy), c = random(ix, iy + 1), d = random(ix + 1, iy + 1);
+      const ux = fx * fx * (3.0 - 2.0 * fx), uy = fy * fy * (3.0 - 2.0 * fy);
+      return a * (1 - ux) * (1 - uy) + b * ux * (1 - uy) + c * (1 - ux) * uy + d * ux * uy;
+    };
+    
+    // Smooth value noise helper
+    const getNoiseValue = (r: number, c: number) => {
+      const x = r * 0.125;
+      const y = c * 0.125;
+      return noise(x, y) * 0.5 + noise(x * 2, y * 2) * 0.25 + noise(x * 4, y * 4) * 0.125 + noise(x * 8, y * 8) * 0.125;
+    };
+
+    for (let r = 0; r < gridSize; r++) {
+      for (let c = 0; c < gridSize; c++) {
+        const idx = r * gridSize + c;
+        const val = getNoiseValue(r, c);
+
+        if (id.includes("alpine")) {
+          // Sharp steep alpine ridges
+          elevations[idx] = Math.pow(val, 2.5) * 1200;
+        } else if (id.includes("desert") || id.includes("canyon")) {
+          // Flat plateau canyon shapes
+          const plateau = Math.max(0.15, Math.min(0.8, Math.abs(val - 0.5) * 2.0));
+          elevations[idx] = plateau * 800;
+        } else if (id.includes("storm") || id.includes("front")) {
+          // Rolling stormy cliffs
+          elevations[idx] = Math.max(0, val - 0.25) * 600;
+        } else {
+          // Rolling hills for islands/others
+          elevations[idx] = Math.max(0, val - 0.3) * 400;
+        }
+      }
+    }
+  }
+
+  // Save heightmap to PNG
+  try {
+    let maxH = 10;
+    for (let i = 0; i < elevations.length; i++) {
+      if (elevations[i] < 0) elevations[i] = 0;
+      if (elevations[i] > maxH) maxH = elevations[i];
+    }
+
+    const pixels = new Uint8Array(gridSize * gridSize * 4);
+    for (let i = 0; i < elevations.length; i++) {
+      const val = Math.min(255, Math.max(0, Math.round((elevations[i] / maxH) * 255)));
+      const idx = i * 4;
+      pixels[idx]     = val; // R
+      pixels[idx + 1] = val; // G
+      pixels[idx + 2] = val; // B
+      pixels[idx + 3] = 255; // A
+    }
+
+    const sharp = (await import("sharp")).default;
+    await sharp(Buffer.from(pixels), {
+      raw: {
+        width: gridSize,
+        height: gridSize,
+        channels: 4
+      }
+    })
+      .png()
+      .toFile(heightmapFile + ".tmp");
+
+    fs.renameSync(heightmapFile + ".tmp", heightmapFile);
+    console.log(`  [Success] Saved elevation heightmap to ${heightmapFile} (max elevation: ${Math.round(maxH)}m)`);
+  } catch (e: any) {
+    console.error(`  Elevation query failed for ${id}: ${e.message}`);
   }
 
   // Be polite to the Overpass API

@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import type { BakedMapGeometry, GroundPalette } from "./content/maps/mapTypes";
 
-const TEX_SIZE = 512;
+const TEX_SIZE = 4096;
 
 // Lighten a hex color by mixing with white at ratio t (0=original, 1=white)
 function lighten(hex: string, t: number): string {
@@ -72,14 +72,15 @@ export function renderMapGeometry(
   }
 
   // --- Roads ---
+  const scale = s / 512;
   for (const road of geom.roads) {
     ctx.strokeStyle = palette.roadColor;
     switch (road.kind) {
-      case "motorway": ctx.lineWidth = 2.5; break;
-      case "primary":  ctx.lineWidth = 1.8; break;
-      case "secondary":ctx.lineWidth = 1.2; break;
-      case "tertiary": ctx.lineWidth = 0.8; break;
-      case "track":    ctx.lineWidth = 0.5; ctx.setLineDash([3, 4]); break;
+      case "motorway": ctx.lineWidth = 2.5 * scale; break;
+      case "primary":  ctx.lineWidth = 1.8 * scale; break;
+      case "secondary":ctx.lineWidth = 1.2 * scale; break;
+      case "tertiary": ctx.lineWidth = 0.8 * scale; break;
+      case "track":    ctx.lineWidth = 0.5 * scale; ctx.setLineDash([3 * scale, 4 * scale]); break;
     }
     strokeLine(ctx, road.pts, s);
     ctx.setLineDash([]);
@@ -104,12 +105,12 @@ export function renderMapGeometry(
   for (const port of geom.ports) {
     const px = port.x * s, py = (1 - port.y) * s;
     ctx.beginPath();
-    ctx.arc(px, py, 3, 0, Math.PI * 2);
+    ctx.arc(px, py, 3 * scale, 0, Math.PI * 2);
     ctx.fill();
   }
 
   const tex = new THREE.CanvasTexture(canvas);
-  tex.anisotropy = 4;
+  tex.anisotropy = 16;
   return tex;
 }
 

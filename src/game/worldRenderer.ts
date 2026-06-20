@@ -130,12 +130,37 @@ export class WorldRenderer {
     this.camera = new THREE.PerspectiveCamera(65, width / height, 1, 15000);
     this.camera.position.set(0, 200, 300);
 
-    this.renderer = new WebGPURenderer({
-      antialias: false,
-      powerPreference: "high-performance"
-    });
-
-    await this.renderer.init();
+    const hasWebGPU = typeof navigator !== "undefined" && !!(navigator as any).gpu;
+    try {
+      this.renderer = new WebGPURenderer({
+        antialias: false,
+        powerPreference: "high-performance",
+        forceWebGL: !hasWebGPU
+      });
+      await this.renderer.init();
+    } catch (err) {
+      console.warn("WebGPURenderer WebGPU backend failed to init, trying WebGL fallback...", err);
+      try {
+        this.renderer = new WebGPURenderer({
+          antialias: false,
+          powerPreference: "high-performance",
+          forceWebGL: true
+        });
+        await this.renderer.init();
+      } catch (err2) {
+        console.error("All rendering backends failed:", err2);
+        const errDiv = document.createElement("div");
+        errDiv.style.color = "#ef4444";
+        errDiv.style.padding = "20px";
+        errDiv.style.textAlign = "center";
+        errDiv.style.background = "#1e293b";
+        errDiv.style.borderRadius = "8px";
+        errDiv.style.margin = "20px";
+        errDiv.innerText = "Fatal: WebGPU/WebGL 2 not supported by your browser or graphics driver.";
+        this.container.appendChild(errDiv);
+        throw err2;
+      }
+    }
 
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     this.renderer.setSize(width, height);
@@ -411,8 +436,9 @@ export class WorldRenderer {
 
     // First try to load pre-baked satellite imagery
     const textureLoader = new THREE.TextureLoader();
+    const baseUrl = ((import.meta as any).env.BASE_URL || "/").replace(/\/$/, "");
     textureLoader.load(
-      `/maps/${this.mapDef.id}.satellite.png`,
+      `${baseUrl}/maps/${this.mapDef.id}.satellite.png`,
       (satTex) => {
         if (!this.groundMaterial) return;
         satTex.wrapS = THREE.ClampToEdgeWrapping;
@@ -423,7 +449,7 @@ export class WorldRenderer {
         fallback.dispose();
 
         // Load geometry JSON in background just to seed scatter objects on their real positions
-        fetch(`/maps/${this.mapDef.id}.geom.json`)
+        fetch(`${baseUrl}/maps/${this.mapDef.id}.geom.json`)
           .then(r => r.ok ? r.json() as Promise<BakedMapGeometry> : Promise.reject(r.status))
           .then(geom => this.initScatter(geom))
           .catch(() => this.initScatter());
@@ -431,7 +457,7 @@ export class WorldRenderer {
       undefined,
       () => {
         // Fallback to OSM geom overlay canvas if satellite is not available
-        fetch(`/maps/${this.mapDef.id}.geom.json`)
+        fetch(`${baseUrl}/maps/${this.mapDef.id}.geom.json`)
           .then(r => r.ok ? r.json() as Promise<BakedMapGeometry> : Promise.reject(r.status))
           .then(geom => {
             if (!this.groundMaterial) return;

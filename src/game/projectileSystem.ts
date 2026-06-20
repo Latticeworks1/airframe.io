@@ -8,6 +8,7 @@ import { Vector3 } from "three";
 import { Pilot, Projectile, GroundTarget, WeaponType, AmmoBelt } from "../types";
 import { WEAPON_SPECS_MAP } from "./aircraftData";
 import { AIRCRAFT_DEFINITIONS } from "./content/aircraft/registry";
+import { MODIFICATIONS } from "./content/modifications/modificationData";
 import { FlightPhysicsEngine } from "./flightModel";
 import { generateId, closestPointOnSegment, getPlaneHitRadius, LOCAL_FORWARD } from "./math";
 import { getTerrainHeight } from "./terrainModel";
@@ -99,7 +100,14 @@ export class ProjectileSystem {
 
     const spec = WEAPON_SPECS_MAP[type];
 
-    const dispersionAmount = spec.dispersion;
+    let dispersionAmount = spec.dispersion;
+    pilot.modifications?.forEach(modId => {
+      const mod = MODIFICATIONS.find(m => m.id === modId);
+      if (mod?.effects.dispersion !== undefined) {
+        dispersionAmount *= (1 + mod.effects.dispersion);
+      }
+    });
+
     const spread = new THREE.Vector3(
       (Math.random() - 0.5) * dispersionAmount,
       (Math.random() - 0.5) * dispersionAmount,
@@ -203,6 +211,14 @@ export class ProjectileSystem {
             .divideScalar(hitRadius);
 
           let finalDmg = WEAPON_SPECS_MAP[p.type].damage;
+          const owner = pilots.find(pl => pl.id === p.ownerId);
+          owner?.modifications?.forEach(modId => {
+            const mod = MODIFICATIONS.find(m => m.id === modId);
+            if (mod?.effects.damage !== undefined) {
+              finalDmg *= (1 + mod.effects.damage);
+            }
+          });
+
           const belt = beltName(p.belt);
 
           if (belt === "Armor-Piercing") finalDmg *= 1.3;
@@ -249,6 +265,14 @@ export class ProjectileSystem {
 
           if (distToTgt < 24) {
             let dmg = WEAPON_SPECS_MAP[p.type].damage;
+            const owner = pilots.find(pl => pl.id === p.ownerId);
+            owner?.modifications?.forEach(modId => {
+              const mod = MODIFICATIONS.find(m => m.id === modId);
+              if (mod?.effects.damage !== undefined) {
+                dmg *= (1 + mod.effects.damage);
+              }
+            });
+
             const belt = beltName(p.belt);
 
             if (belt === "Armor-Piercing") dmg *= 1.8;
