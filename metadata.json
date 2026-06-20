@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Remix: Airframe.io",
+  "description": "A high-performance 3D browser air-combat .io game with energy flight dynamics, tactical damage zones, real-time-simulated dogfights, and multiple game modes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

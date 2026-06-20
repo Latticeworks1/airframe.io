@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@keyframes hitmarker-scale {
+  0% { transform: scale(1.4); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0; }
+}
+
+.hitmarker-animate {
+  animation: hitmarker-scale 0.16s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+}
+
+.hud-fps-counter[data-level="good"] {
+  color: #86efac;
+}
+
+.hud-fps-counter[data-level="warn"] {
+  color: #fcd34d;
+}
+
+.hud-fps-counter[data-level="bad"] {
+  color: #fb7185;
+}
+@keyframes click-to-play {
+  0%, 100% {
+    transform: scale(0.94);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+.animate-click-to-play {
+  animation: click-to-play 1.35s ease-in-out infinite;
+  transform-origin: center;
+}

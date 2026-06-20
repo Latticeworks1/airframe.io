@@ -1,11 +1,21 @@
 ---
 title: Airframe.io
-emoji: 📚
-colorFrom: red
-colorTo: gray
+emoji: ✈
+colorFrom: gray
+colorTo: blue
 sdk: docker
 pinned: false
-short_description: airplane game
+app_port: 7860
 ---
 
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
+# Airframe.io
+
+A browser-based multiplayer air-combat game with energy flight dynamics, tactical damage zones, real-time dogfights, and multiple game modes.
+
+## Run Locally
+
+**Prerequisites:** Node.js
+
+1. Install dependencies: `npm install`
+2. Copy `.env.example` to `.env.local` and set `GEMINI_API_KEY`
+3. Run: `npm run dev`

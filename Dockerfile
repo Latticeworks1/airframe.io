@@ -1,25 +1,16 @@
-FROM python:3.11-slim
-
-USER root
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN useradd -m -u 1000 user
-
-USER user
-
-ENV PATH="/home/user/.local/bin:$PATH"
-ENV PYTHONUNBUFFERED=1
+FROM node:20-slim
 
 WORKDIR /app
 
-COPY --chown=user requirements.txt .
-RUN pip install --no-cache-dir --upgrade -r requirements.txt
+COPY package*.json ./
+RUN npm ci
 
-COPY --chown=user . .
+COPY . .
+RUN npm run build && npm prune --omit=dev
 
 EXPOSE 7860
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]
+ENV PORT=7860
+ENV NODE_ENV=production
+
+CMD ["node", "dist/server.cjs"]
