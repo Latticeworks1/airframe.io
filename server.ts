@@ -1,6 +1,8 @@
 import express from "express";
 import path from "path";
 import http from "http";
+import { writeFileSync, appendFileSync } from "fs";
+import { tmpdir } from "os";
 import { createServer as createViteServer } from "vite";
 import { WebSocketServer, WebSocket } from "ws";
 import type { WireDamageModel, WirePilotState, WireBotState } from "./src/networkTypes";
@@ -31,6 +33,8 @@ interface PlayerState {
 
 interface Room {
   id: string;
+  queueKey: string;
+  capacity: number;
   hostId: string | null;
   players: Map<string, PlayerState>;
   sockets: Map<string, WebSocket>;
@@ -51,12 +55,39 @@ async function startServer() {
 
   // In-memory rooms for matches
   const rooms = new Map<string, Room>();
+  const activeSessions = new Map<string, WebSocket>();
+  const MAX_PLAYERS_PER_ROOM = 12;
+  let roomSequence = 0;
+
+  // Dedicated telemetry WebSocket — streams frames straight to telemetry.jsonl in real time.
+  const telemWss = new WebSocketServer({ noServer: true });
+  telemWss.on("connection", (ws) => {
+    let frameCount = 0;
+    writeFileSync(telemPath, ""); // new session on every connection
+    console.log("[telemetry] session started");
+
+    ws.on("message", (raw: Buffer) => {
+      try {
+        const frames: unknown[] = JSON.parse(raw.toString());
+        if (!Array.isArray(frames) || frames.length === 0) return;
+        const lines = frames.map(f => JSON.stringify(f)).join("\n") + "\n";
+        appendFileSync(telemPath, lines);
+        frameCount += frames.length;
+      } catch { /* drop malformed */ }
+    });
+
+    ws.on("close", () => console.log(`[telemetry] session ended — ${frameCount} frames`));
+  });
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "", `http://${request.headers.host}`);
     if (url.pathname === "/multiplayer") {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);
+      });
+    } else if (url.pathname === "/telemetry-ws") {
+      telemWss.handleUpgrade(request, socket, head, (ws) => {
+        telemWss.emit("connection", ws);
       });
     } else {
       socket.destroy();
@@ -66,30 +97,73 @@ async function startServer() {
   wss.on("connection", (ws: WebSocket) => {
     let currentRoomId: string | null = null;
     let currentPilotId: string | null = null;
+    let currentSessionId: string | null = null;
 
     ws.on("message", (message: string) => {
       try {
         const data = JSON.parse(message);
 
         if (data.type === "join") {
-          const { roomId, pilotId, name, team, specs, skin } = data;
-          currentRoomId = roomId;
-          currentPilotId = pilotId;
+          if (currentRoomId || currentPilotId) {
+            ws.send(JSON.stringify({
+              type: "join_rejected",
+              reason: "already_joined"
+            }));
+            return;
+          }
 
-          // Initialize room if not exists
-          if (!rooms.has(roomId)) {
-            rooms.set(roomId, {
+          const { pilotId, name, specs, skin } = data;
+          const queueKey = String(data.queueKey || data.roomId || "quickplay");
+          const sessionId = String(data.sessionId || pilotId);
+          const existingSession = activeSessions.get(sessionId);
+
+          if (
+            existingSession &&
+            existingSession !== ws &&
+            existingSession.readyState === WebSocket.OPEN
+          ) {
+            ws.send(JSON.stringify({
+              type: "join_rejected",
+              reason: "duplicate_session"
+            }));
+            return;
+          }
+
+          let room = Array.from(rooms.values())
+            .filter(candidate =>
+              candidate.queueKey === queueKey &&
+              candidate.players.size < candidate.capacity
+            )
+            .sort((a, b) => b.players.size - a.players.size)[0];
+
+          if (!room) {
+            const roomId = `${queueKey}#${++roomSequence}`;
+            room = {
               id: roomId,
+              queueKey,
+              capacity: MAX_PLAYERS_PER_ROOM,
               hostId: pilotId,
               players: new Map(),
               sockets: new Map(),
               groundTargets: new Map(),
               skyZones: new Map(),
               scores: { team1: 0, team2: 0 }
-            });
+            };
+            rooms.set(roomId, room);
           }
 
-          const room = rooms.get(roomId)!;
+          const team1Count = Array.from(room.players.values())
+            .filter(player => player.team === 1).length;
+          const team2Count = room.players.size - team1Count;
+          const assignedTeam: 1 | 2 =
+            team1Count === team2Count
+              ? (room.players.size % 2 === 0 ? 1 : 2)
+              : team1Count < team2Count ? 1 : 2;
+
+          currentRoomId = room.id;
+          currentPilotId = pilotId;
+          currentSessionId = sessionId;
+          activeSessions.set(sessionId, ws);
           
           // If no host exists, assign this pilot
           if (!room.hostId) {
@@ -99,7 +173,7 @@ async function startServer() {
           const defaultPlayerState: PlayerState = {
             id: pilotId,
             name,
-            team: team || 1,
+            team: assignedTeam,
             aircraftId: specs.id,
             specs,
             skin: skin || "default",
@@ -133,6 +207,10 @@ async function startServer() {
           ws.send(JSON.stringify({
             type: "welcome",
             assignedId: pilotId,
+            assignedTeam,
+            roomId: room.id,
+            queueKey: room.queueKey,
+            capacity: room.capacity,
             hostId: room.hostId,
             players: existingPlayers,
             scores: room.scores,
@@ -246,6 +324,21 @@ async function startServer() {
             }
           });
         }
+        else if (data.type === "damage_inflicted") {
+          if (!currentRoomId) return;
+          const room = rooms.get(currentRoomId);
+          if (!room) return;
+
+          const targetSocket = room.sockets.get(data.targetId);
+          if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+            targetSocket.send(JSON.stringify({
+              type: "damage_inflicted",
+              damage: data.damage,
+              bulletType: data.bulletType,
+              hitSpotLocal: data.hitSpotLocal
+            }));
+          }
+        }
 
         else if (data.type === "skyzone_update") {
           if (!currentRoomId) return;
@@ -332,6 +425,13 @@ async function startServer() {
     });
 
     ws.on("close", () => {
+      if (
+        currentSessionId &&
+        activeSessions.get(currentSessionId) === ws
+      ) {
+        activeSessions.delete(currentSessionId);
+      }
+
       if (currentRoomId && currentPilotId) {
         const room = rooms.get(currentRoomId);
         if (room) {
@@ -380,6 +480,8 @@ async function startServer() {
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", activeRooms: rooms.size });
   });
+
+  const telemPath = path.join(tmpdir(), "airframe-telemetry.jsonl");
 
   // Client-Side Asset Bundling & Middleware
   if (process.env.NODE_ENV !== "production") {

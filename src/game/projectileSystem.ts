@@ -7,19 +7,81 @@ import * as THREE from "three";
 import { Vector3 } from "three";
 import { Pilot, Projectile, GroundTarget, WeaponType, AmmoBelt } from "../types";
 import { WEAPON_SPECS_MAP } from "./aircraftData";
+import { AIRCRAFT_DEFINITIONS } from "./content/aircraft/registry";
 import { FlightPhysicsEngine } from "./flightModel";
 import { generateId, closestPointOnSegment, getPlaneHitRadius, LOCAL_FORWARD } from "./math";
+import { getTerrainHeight } from "./terrainModel";
 
 function beltName(belt: AmmoBelt | string): string {
   return String(belt);
+}
+
+export function getProjectileReleaseState(
+  pilot: Pilot,
+  type: WeaponType
+): { position: Vector3; velocity: Vector3 } {
+  const rotation = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
+  );
+  const direction = LOCAL_FORWARD.clone().applyQuaternion(rotation).normalize();
+  const spec = WEAPON_SPECS_MAP[type];
+  const aircraftDef = AIRCRAFT_DEFINITIONS.find(
+    definition => definition.specs.id === pilot.aircraftId
+  );
+  const currentAmmo = pilot.ammo[type] ?? spec.ammoCapacity;
+  const releasedCount = Math.max(0, spec.ammoCapacity - currentAmmo);
+  const hardpointList =
+    type === WeaponType.BOMB
+      ? aircraftDef?.hardpoints.bombPositions
+      : type === WeaponType.ROCKET
+        ? aircraftDef?.hardpoints.rocketPositions
+        : aircraftDef?.hardpoints.positions;
+  const hardpoint = hardpointList?.length
+    ? hardpointList[releasedCount % hardpointList.length]
+    : null;
+
+  const position = new Vector3(pilot.x, pilot.y, pilot.z);
+  if (hardpoint) {
+    position.add(
+      new Vector3(hardpoint.x, hardpoint.y, hardpoint.z)
+        .applyQuaternion(rotation)
+    );
+  } else {
+    position.addScaledVector(direction, 12);
+  }
+
+  const velocity = new Vector3(pilot.vx, pilot.vy, pilot.vz);
+  if (type === WeaponType.BOMB) {
+    velocity.add(
+      new Vector3(0, -1, 0)
+        .applyQuaternion(rotation)
+        .multiplyScalar(3.5)
+    );
+  } else {
+    velocity.addScaledVector(direction, spec.muzzleVelocity);
+  }
+
+  return { position, velocity };
 }
 
 export interface EngineCallbacks {
   registerKill: (killerId: string, victimId: string, weapon: string) => void;
   registerGroundTargetKill: (killerId: string, target: GroundTarget) => void;
   onProjectileSpawn?: (type: WeaponType) => void;
+  onProjectileImpact?: (
+    type: WeaponType,
+    position: Vector3,
+    ownerId: string
+  ) => void;
   onGroundTargetDamage?: (targetId: string, hp: number, isDead: boolean) => void;
   onHitEnemy?: (killerId: string, targetId: string, isGround: boolean) => void;
+  onPlayerDamage?: (
+    shooterId: string,
+    targetId: string,
+    damage: number,
+    bulletType: string,
+    hitSpotLocal: Vector3
+  ) => void;
 }
 
 export class ProjectileSystem {
@@ -29,8 +91,6 @@ export class ProjectileSystem {
     projectiles: Projectile[],
     onProjectileSpawn?: (type: WeaponType) => void
   ) {
-    const origin = new Vector3(pilot.x, pilot.y, pilot.z);
-
     const rot = new THREE.Quaternion().setFromEuler(
       new THREE.Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
     );
@@ -38,7 +98,6 @@ export class ProjectileSystem {
     const dir = LOCAL_FORWARD.clone().applyQuaternion(rot).normalize();
 
     const spec = WEAPON_SPECS_MAP[type];
-    const bulletSpeed = spec.muzzleVelocity;
 
     const dispersionAmount = spec.dispersion;
     const spread = new THREE.Vector3(
@@ -49,7 +108,11 @@ export class ProjectileSystem {
 
     dir.add(spread).normalize();
 
-    const startPos = origin.clone().addScaledVector(dir, 12);
+    const release = getProjectileReleaseState(pilot, type);
+    if (type !== WeaponType.BOMB) {
+      release.velocity.set(pilot.vx, pilot.vy, pilot.vz)
+        .addScaledVector(dir, spec.muzzleVelocity);
+    }
 
     const projectile: Projectile = {
       id: generateId(),
@@ -57,12 +120,12 @@ export class ProjectileSystem {
       ownerTeam: pilot.team,
       type,
       belt: pilot.ammoBelt,
-      x: startPos.x,
-      y: startPos.y,
-      z: startPos.z,
-      vx: pilot.vx + dir.x * bulletSpeed,
-      vy: pilot.vy + dir.y * bulletSpeed,
-      vz: pilot.vz + dir.z * bulletSpeed,
+      x: release.position.x,
+      y: release.position.y,
+      z: release.position.z,
+      vx: release.velocity.x,
+      vy: release.velocity.y,
+      vz: release.velocity.z,
       life: type === WeaponType.ROCKET ? 4.5 : type === WeaponType.BOMB ? 7.0 : 1.8,
       isRocket: type === WeaponType.ROCKET || type === WeaponType.BOMB
     };
@@ -73,19 +136,29 @@ export class ProjectileSystem {
 
     projectiles.push(projectile);
   }
+  
+  private static lastPosTmp = new Vector3();
+  private static currentPosTmp = new Vector3();
+  private static targetPosTmp = new Vector3();
+  private static closestTmp = new Vector3();
+  private static localImpactWorldTmp = new Vector3();
+  private static rotInvTmp = new THREE.Quaternion();
+  private static eulerTmp = new THREE.Euler();
+  private static relativeOffsetLocalTmp = new Vector3();
 
   public static updateProjectiles(
     dt: number,
     projectiles: Projectile[],
     pilots: Pilot[],
     groundTargets: GroundTarget[],
+    mapId: string,
     callbacks: EngineCallbacks
   ) {
     for (let i = projectiles.length - 1; i >= 0; i--) {
       const p = projectiles[i];
       p.life -= dt;
 
-      const lastPos = new Vector3(p.x, p.y, p.z);
+      ProjectileSystem.lastPosTmp.set(p.x, p.y, p.z);
 
       if (p.type === WeaponType.BOMB) {
         p.vy -= 9.8 * dt;
@@ -95,7 +168,7 @@ export class ProjectileSystem {
       p.y += p.vy * dt;
       p.z += p.vz * dt;
 
-      const currentPos = new Vector3(p.x, p.y, p.z);
+      ProjectileSystem.currentPosTmp.set(p.x, p.y, p.z);
       let hasHit = false;
 
       // Pilot check
@@ -107,20 +180,26 @@ export class ProjectileSystem {
         if (target.damage.fuselage <= 0) continue;
         if ((epTarget.invulnerableTimer ?? 0) > 0) continue;
 
-        const targetPos = new Vector3(target.x, target.y, target.z);
-        const closest = closestPointOnSegment(lastPos, currentPos, targetPos);
-        const distToPlaneCenter = closest.distanceTo(targetPos);
+        ProjectileSystem.targetPosTmp.set(target.x, target.y, target.z);
+        closestPointOnSegment(
+          ProjectileSystem.lastPosTmp,
+          ProjectileSystem.currentPosTmp,
+          ProjectileSystem.targetPosTmp,
+          ProjectileSystem.closestTmp
+        );
+        const distToPlaneCenter = ProjectileSystem.closestTmp.distanceTo(ProjectileSystem.targetPosTmp);
         const hitRadius = getPlaneHitRadius(target.specs);
 
         if (distToPlaneCenter < hitRadius) {
-          const localImpactWorld = closest.clone().sub(targetPos);
+          ProjectileSystem.localImpactWorldTmp.copy(ProjectileSystem.closestTmp).sub(ProjectileSystem.targetPosTmp);
 
-          const rotInv = new THREE.Quaternion()
-            .setFromEuler(new THREE.Euler(target.pitch, target.yaw, target.roll, "YXZ"))
+          ProjectileSystem.rotInvTmp
+            .setFromEuler(ProjectileSystem.eulerTmp.set(target.pitch, target.yaw, target.roll, "YXZ"))
             .invert();
 
-          const relativeOffsetLocal = localImpactWorld
-            .applyQuaternion(rotInv)
+          ProjectileSystem.relativeOffsetLocalTmp
+            .copy(ProjectileSystem.localImpactWorldTmp)
+            .applyQuaternion(ProjectileSystem.rotInvTmp)
             .divideScalar(hitRadius);
 
           let finalDmg = WEAPON_SPECS_MAP[p.type].damage;
@@ -129,8 +208,18 @@ export class ProjectileSystem {
           if (belt === "Armor-Piercing") finalDmg *= 1.3;
           if (belt === "Incendiary") finalDmg *= 0.85;
 
-          FlightPhysicsEngine.applyDamage(target, finalDmg, String(p.type), relativeOffsetLocal);
+          FlightPhysicsEngine.applyDamage(target, finalDmg, String(p.type), ProjectileSystem.relativeOffsetLocalTmp);
           hasHit = true;
+
+          if (callbacks.onPlayerDamage) {
+            callbacks.onPlayerDamage(
+              p.ownerId,
+              target.id,
+              finalDmg,
+              String(p.type),
+              ProjectileSystem.relativeOffsetLocalTmp
+            );
+          }
 
           if (callbacks.onHitEnemy) {
             callbacks.onHitEnemy(p.ownerId, target.id, false);
@@ -149,9 +238,14 @@ export class ProjectileSystem {
         for (const target of groundTargets) {
           if (target.isDead || target.team === p.ownerTeam) continue;
 
-          const targetPos = new Vector3(target.x, target.y, target.z);
-          const closest = closestPointOnSegment(lastPos, currentPos, targetPos);
-          const distToTgt = closest.distanceTo(targetPos);
+          ProjectileSystem.targetPosTmp.set(target.x, target.y, target.z);
+          closestPointOnSegment(
+            ProjectileSystem.lastPosTmp,
+            ProjectileSystem.currentPosTmp,
+            ProjectileSystem.targetPosTmp,
+            ProjectileSystem.closestTmp
+          );
+          const distToTgt = ProjectileSystem.closestTmp.distanceTo(ProjectileSystem.targetPosTmp);
 
           if (distToTgt < 24) {
             let dmg = WEAPON_SPECS_MAP[p.type].damage;
@@ -181,15 +275,27 @@ export class ProjectileSystem {
         }
       }
 
-      if (!hasHit && p.y <= 12) {
+      const terrainHeight = getTerrainHeight(p.x, p.z, mapId).height;
+      if (!hasHit && p.y <= Math.max(12, terrainHeight)) {
         hasHit = true;
 
         if (p.isRocket) {
-          this.triggerSplashDamage(currentPos, p.ownerId, p.ownerTeam, p.type, groundTargets, pilots, callbacks);
+          this.triggerSplashDamage(
+            ProjectileSystem.currentPosTmp,
+            p.ownerId,
+            p.ownerTeam,
+            p.type,
+            groundTargets,
+            pilots,
+            callbacks
+          );
         }
       }
 
       if (hasHit || p.life <= 0) {
+        if (hasHit && callbacks.onProjectileImpact) {
+          callbacks.onProjectileImpact(p.type, ProjectileSystem.currentPosTmp, p.ownerId);
+        }
         projectiles.splice(i, 1);
       }
     }
