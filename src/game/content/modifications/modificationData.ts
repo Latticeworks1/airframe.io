@@ -1,0 +1,57 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { Modification, ModificationSlot } from "../../../types";
+
+export const MODIFICATIONS: Modification[] = [
+  {
+    id: "fuel-heavy",
+    name: "High-Octane Mixture",
+    description:
+      "Adds 12% engine thrust and increases acceleration, but slightly decreases durability due to compression stress.",
+    slot: ModificationSlot.Engine,
+    effects: { maxThrust: 0.12, durability: -0.05 }
+  },
+  {
+    id: "engine-polishing",
+    name: "Intake Polishing",
+    description:
+      "Reduces drag coefficient by 6% and improves horizontal cruise speed without weight penalties.",
+    slot: ModificationSlot.Engine,
+    effects: { cd0: -0.006 }
+  },
+  {
+    id: "stripped-frame",
+    name: "Lightweight Stripping",
+    description:
+      "Slashes aircraft mass by 8%, improving climb rate and initial turn rate significantly, but decreases max durability.",
+    slot: ModificationSlot.Airframe,
+    effects: { mass: -0.08, durability: -0.1 }
+  },
+  {
+    id: "reinforced-skin",
+    name: "Reinforced Alloys",
+    description:
+      "Improves overall structural durability by 20% and slightly decreases wing drag, but adds 5% total mass.",
+    slot: ModificationSlot.Airframe,
+    effects: { durability: 0.2, mass: 0.05, cd0: 0.002 }
+  },
+  {
+    id: "muzzle-booster",
+    name: "Over pressured Belts",
+    description:
+      "Maximizes firearm energy. Slightly elevates weapon spread but increases standard structural tearing damage.",
+    slot: ModificationSlot.Weapon,
+    effects: { damage: 0.25, dispersion: 0.40 }
+  },
+  {
+    id: "polished-guns",
+    name: "Polished Gun Mounts",
+    description:
+      "Precision-aligned gun mounts reduce wing aerodynamic interference, increasing aileron authority by 10%.",
+    slot: ModificationSlot.Weapon,
+    effects: { rollRate: 0.10 }
+  }
+];
