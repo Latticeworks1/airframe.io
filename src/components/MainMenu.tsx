@@ -4,46 +4,47 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { UserProgression, MatchMode, GameMap, AmmoBelt } from "../types";
-import { DEFAULT_AIRCRAFT, MAPS } from "../game/aircraftData";
+import {
+  UserProgression,
+  MatchMode,
+  AmmoBelt,
+  CampaignMissionDefinition
+} from "../types";
+import { KnownMaps } from "../game/content/maps/mapTypes";
+import { DEFAULT_AIRCRAFT } from "../game/aircraftData";
+import { CAMPAIGN_MISSIONS } from "../game/content/campaign/campaignMissions";
 import {
   Lock,
-  Unlock,
-  Zap,
-  Shield,
-  Activity,
-  Trophy,
   Sparkles,
-  Check,
-  MapPin,
-  Flame,
-  Volume2,
-  Crown,
   ChevronRight,
   ChevronLeft,
-  ArrowLeft,
-  ArrowRight,
-  RefreshCw,
   Coins,
-  Plus,
-  Trash2,
   User,
   ListTodo,
   ChevronDown,
-  Wrench,
-  Users
+  Wrench
 } from "lucide-react";
 import { PlanePreview3D } from "./PlanePreview3D";
 
 interface MainMenuProps {
   progression: UserProgression;
-  onLaunchMatch: (selectedPlane: string, belt: AmmoBelt, mods: string[], mapId: GameMap, mode: MatchMode, isMultiplayer: boolean, startOnGround?: boolean) => void;
+  onLaunchMatch: (
+    selectedPlane: string,
+    belt: AmmoBelt,
+    mods: string[],
+    mapId: string,
+    mode: MatchMode,
+    isMultiplayer: boolean,
+    startOnGround?: boolean,
+    campaignMissionId?: string
+  ) => void;
   onUpdateProgression: (updated: UserProgression) => void;
   onOpenRegistration: () => void;
 }
 
 enum HangarTab {
   Lobby = "PLAY",
+  Campaign = "CAMPAIGN",
   Hangar = "HANGAR",
   Skins = "SKINS",
   Shop = "SHOP"
@@ -67,17 +68,13 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const [activeTab, setActiveTab] = useState<HangarTab>(HangarTab.Lobby);
   const [selectedPlaneId, setSelectedPlaneId] = useState(progression.selectedPlaneId || "falcon-mk2");
   const [selectedBelt, setSelectedBelt] = useState<AmmoBelt>(progression.selectedBelt || AmmoBelt.Universal);
-  const [isMultiplayer, setIsMultiplayer] = useState(true);
-  const [selectedMapId, setSelectedMapId] = useState<GameMap>(GameMap.IslandChain);
+  const [selectedMapId, setSelectedMapId] = useState<string>(KnownMaps.IslandChain);
   const [selectedMode, setSelectedMode] = useState<MatchMode>(MatchMode.AirSupremacy);
   // Custom persist simulated Gold currency
   const [gold, setGold] = useState<number>(() => {
     const saved = localStorage.getItem("airframe_gold");
     return saved ? parseInt(saved) : 850;
   });
-
-  // Fortnite style Squad Party Bots list
-  const [partyBots, setPartyBots] = useState<string[]>([]);
 
   // Daily Quests Claim System state
   const [unlockedSkins, setUnlockedSkins] = useState<string[]>(() => {
@@ -88,12 +85,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const [claimedDaily, setClaimedDaily] = useState(false);
 
   // Ready Room UI Popups States
-  const [showModeDropdown, setShowModeDropdown] = useState(false);
-  const [showSquadDropdown, setShowSquadDropdown] = useState(false);
+  const [_showModeDropdown, setShowModeDropdown] = useState(false);
   const [showLoadoutDrawer, setShowLoadoutDrawer] = useState(false);
   const [showQuestDrawer, setShowQuestDrawer] = useState(false);
   const [showCoinsDrawer, setShowCoinsDrawer] = useState(false);
-  const [showTheaterDrawer, setShowTheaterDrawer] = useState(false);
 
   // Active plane specifications definitions
   const currentPlane = DEFAULT_AIRCRAFT.find(a => a.id === selectedPlaneId) || DEFAULT_AIRCRAFT[0];
@@ -159,33 +154,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
     setSelectedPlaneId(planeId);
   };
 
-  const AVAILABLE_THEATRES = [
-    { id: GameMap.IslandChain, name: "Island Chain", mode: MatchMode.AirSupremacy },
-    { id: GameMap.StormFront, name: "Storm Front", mode: MatchMode.Intercept },
-    { id: GameMap.DesertCanyon, name: "Desert Canyon", mode: MatchMode.DuelArena },
-    { id: GameMap.AlpineValley, name: "Alpine Valley", mode: MatchMode.AirSupremacy }
+  const availableTheaters = [
+    { id: KnownMaps.IslandChain,  mode: MatchMode.AirSupremacy },
+    { id: KnownMaps.StormFront,   mode: MatchMode.Intercept    },
+    { id: KnownMaps.DesertCanyon, mode: MatchMode.DuelArena    },
+    { id: KnownMaps.AlpineValley, mode: MatchMode.AirSupremacy }
   ];
-
-  const handleCyclePlane = (direction: number) => {
-    try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = audioCtx.createOscillator();
-      const gainNode = audioCtx.createGain();
-      osc.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
-      osc.frequency.setValueAtTime(480, audioCtx.currentTime);
-      osc.type = "sine";
-      gainNode.gain.setValueAtTime(0.012, audioCtx.currentTime);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.04);
-    } catch (_) {}
-
-    const index = DEFAULT_AIRCRAFT.findIndex(p => p.id === selectedPlaneId);
-    if (index !== -1) {
-      const nextIndex = (index + direction + DEFAULT_AIRCRAFT.length) % DEFAULT_AIRCRAFT.length;
-      handleEquipPlane(DEFAULT_AIRCRAFT[nextIndex].id);
-    }
-  };
 
   const handleCycleMap = (direction: number) => {
     try {
@@ -201,12 +175,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       osc.stop(audioCtx.currentTime + 0.05);
     } catch (_) {}
 
-    const index = AVAILABLE_THEATRES.findIndex(t => t.id === selectedMapId);
-    if (index !== -1) {
-      const nextIndex = (index + direction + AVAILABLE_THEATRES.length) % AVAILABLE_THEATRES.length;
-      const t = AVAILABLE_THEATRES[nextIndex];
-      handleSelectModeDetails(t.mode, t.id);
-    }
+    const index = availableTheaters.findIndex(theater => theater.id === selectedMapId);
+    const nextIndex =
+      (index + direction + availableTheaters.length) % availableTheaters.length;
+    const nextTheater = availableTheaters[nextIndex];
+    setSelectedMapId(nextTheater.id);
+    setSelectedMode(nextTheater.mode);
   };
 
   const handleUnlockSkin = (skin: SkinPreset) => {
@@ -275,23 +249,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
     onUpdateProgression(updated);
   };
 
-  // Add Party Bot
-  const handleTogglePartyBot = (botName: string) => {
-    if (partyBots.includes(botName)) {
-      setPartyBots(partyBots.filter(b => b !== botName));
-    } else {
-      if (partyBots.length < 2) {
-        setPartyBots([...partyBots, botName]);
-      }
-    }
-  };
-
-  const handleSelectModeDetails = (mode: MatchMode, map: GameMap) => {
-    setSelectedMode(mode);
-    setSelectedMapId(map);
-    setShowModeDropdown(false);
-  };
-
   const handleLaunch = () => {
     if (!isPlaneUnlocked) return;
 
@@ -309,7 +266,21 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       activeMods,
       selectedMapId,
       selectedMode,
-      isMultiplayer || partyBots.length > 0
+      true
+    );
+  };
+
+  const handleLaunchCampaign = (mission: CampaignMissionDefinition) => {
+    const missionMods = progression.equippedMods?.[mission.aircraftId] || [];
+    onLaunchMatch(
+      mission.aircraftId,
+      selectedBelt,
+      missionMods,
+      mission.mapId,
+      mission.mode,
+      false,
+      mission.startOnGround ?? false,
+      mission.id
     );
   };
 
@@ -321,18 +292,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
     { id: "reinforced-skin", name: "Composite Alloy Hulling", effects: "+20% Hitpoints, +5% Drag", slot: "Armor" },
     { id: "polished-guns", name: "Low-Friction Gun Gaskets", effects: "+10% Wing-Roll Speed Rate", slot: "Weapons" }
   ];
-
-  const getModeFriendlyName = () => {
-    if (selectedMode === MatchMode.AirSupremacy) return "AIR ARCADE";
-    if (selectedMode === MatchMode.Intercept) return "CARRIER DEFENSE";
-    return "CANYON FFA";
-  };
-
-  const getMapFriendlyDesc = () => {
-    if (selectedMapId === GameMap.IslandChain) return "Island Chain · 6v6 · Fast respawn";
-    if (selectedMapId === GameMap.StormFront) return "Storm Front · 8v8 · Defend Carrier";
-    return "Desert Canyon · Duel · Hardcore";
-  };
 
   return (
     <div
@@ -356,7 +315,11 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           <div className="absolute left-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
             <button
                type="button"
-               onClick={() => handleCycleMap(-1)}
+               onClick={(event) => {
+                 event.stopPropagation();
+                 handleCycleMap(-1);
+               }}
+               aria-label="Previous map"
                className="group flex items-center justify-center w-20 h-20 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)] text-center text-[7px]"
             >
               <ChevronLeft size={38} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
@@ -366,7 +329,11 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           <div className="absolute right-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
              <button
                type="button"
-               onClick={() => handleCycleMap(1)}
+               onClick={(event) => {
+                 event.stopPropagation();
+                 handleCycleMap(1);
+               }}
+               aria-label="Next map"
                className="group flex items-center justify-center w-20 h-20 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)] text-center text-[7px]"
              >
                <ChevronRight size={38} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
@@ -399,17 +366,28 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               return (
                 <button
                   key={tab}
+                  id={tab === HangarTab.Lobby ? "btn-launch-fight" : undefined}
+                  disabled={tab === HangarTab.Lobby && !isPlaneUnlocked}
                   onClick={() => {
+                    if (tab === HangarTab.Lobby) {
+                      handleLaunch();
+                      return;
+                    }
+
                     setActiveTab(tab);
                     // Close other popups for a clean switch
                     setShowModeDropdown(false);
-                    setShowSquadDropdown(false);
                   }}
+                  title={
+                    tab === HangarTab.Lobby && !isPlaneUnlocked
+                      ? "Unlock this aircraft before launching"
+                      : undefined
+                  }
                   className={`px-3.5 py-1.5 rounded-lg text-[10px] font-black tracking-wider uppercase transition-all duration-150 cursor-pointer ${
                     isSelected
                       ? "bg-amber-500 text-slate-950 font-extrabold shadow-md shadow-amber-500/10 text-shadow-sm"
                       : "text-slate-400 hover:text-slate-150 hover:bg-slate-900/40"
-                  }`}
+                  } ${tab === HangarTab.Lobby && !isPlaneUnlocked ? "opacity-50 cursor-not-allowed" : ""}`}
                 >
                   {tab}
                 </button>
@@ -435,7 +413,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   setShowCoinsDrawer(!showCoinsDrawer);
                   setShowQuestDrawer(false);
                   setShowLoadoutDrawer(false);
-                  setShowTheaterDrawer(false);
                 }}
                 className="flex items-center gap-3 bg-slate-950/60 border border-slate-900 hover:border-slate-800 px-3 py-1.5 rounded-lg text-xs font-mono font-bold text-[9.5px] cursor-pointer"
               >
@@ -494,11 +471,16 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       </header>
 
       {/* 2. CENTER STAGE CONTENT */}
-      <main className="relative z-40 w-full max-w-7xl mx-auto flex-grow flex flex-col justify-center items-center px-4 overflow-hidden">
+      <main
+        onClick={activeTab === HangarTab.Lobby && isPlaneUnlocked ? handleLaunch : undefined}
+        className={`relative z-40 w-full max-w-7xl mx-auto flex-grow flex flex-col justify-center items-center px-4 overflow-hidden ${
+          activeTab === HangarTab.Lobby && isPlaneUnlocked ? "cursor-pointer" : ""
+        }`}
+      >
         
         {/* Lobby State: Center-First Ready Room */}
         {activeTab === HangarTab.Lobby && (
-          <div className="w-full h-full min-h-[70vh] flex flex-col justify-end items-center text-center animate-fadeIn py-6 relative">
+          <div className="w-full h-full min-h-[70vh] flex flex-col justify-center items-center text-center animate-fadeIn py-6 relative">
             
             {/* Plane Hero Specs Info (Pushed to the absolute lower-left) */}
             <div className="absolute left-4 bottom-22 md:left-6 md:bottom-18 max-w-sm text-left select-none animate-fadeIn pointer-events-none">
@@ -510,27 +492,14 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               </p>
             </div>
 
-            {/* Massive Battle Launch Trigger at the Bottom Center */}
-            <div className="w-full sm:w-80 pointer-events-auto select-none mb-10">
-              {!isPlaneUnlocked ? (
-                <div className="w-full bg-[#070b14]/95 border border-red-500/20 p-4 rounded-xl text-red-500 text-[10px] uppercase font-bold flex flex-col items-center justify-center gap-1 shadow-lg backdrop-blur-sm">
-                  <Lock size={15} className="animate-pulse mb-1" />
-                  <span>JET LOCKED IN FLEET</span>
-                  <span className="text-[7.5px] text-slate-500 font-mono tracking-wide font-normal lowercase block">Spend match XP Credits in HANGAR tab first</span>
-                </div>
-              ) : (
-                <button
-                  id="btn-launch-fight"
-                  onClick={handleLaunch}
-                  className="w-full py-4 bg-gradient-to-t from-red-650 to-red-500 hover:from-red-600 hover:to-orange-500 text-white font-black rounded-xl cursor-pointer hover:shadow-[0_0_20px_rgba(239,68,68,0.25)] transform hover:scale-[1.015] active:scale-[0.985] transition-all duration-150 tracking-wider uppercase text-xs flex justify-center items-center gap-2 shadow-2xl"
-                >
-                  <Zap size={14} className="text-amber-300 fill-amber-300 shrink-0" />
-                  <div className="flex flex-col text-left font-sans leading-none">
-                    <span className="text-[12.5px] font-black tracking-[0.15em] leading-none">TO BATTLE!</span>
-                    <span className="text-[6.5px] text-red-150 uppercase font-mono tracking-tight font-normal block mt-1">LAUNCH FLIGHT SIMULATOR</span>
-                  </div>
-                </button>
-              )}
+            <div
+              className="animate-click-to-play pointer-events-none select-none whitespace-nowrap text-center text-3xl md:text-5xl font-black tracking-[0.16em] text-white uppercase"
+              style={{
+                textShadow:
+                  "0 0 4px #000, 0 0 9px #000, 3px 3px 0 #000, -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000"
+              }}
+            >
+              Click to Play
             </div>
 
           </div>
@@ -610,6 +579,82 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                       )}
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {activeTab === HangarTab.Campaign && (
+          <div className="w-full max-w-5xl bg-[#050912]/94 border border-slate-800/90 p-5 rounded-xl backdrop-blur-md flex flex-col gap-4 animate-scaleUp pointer-events-auto max-h-[80vh] overflow-y-auto mt-2">
+            <div className="text-left border-b border-slate-800 pb-3">
+              <h3 className="text-[12px] font-black tracking-[0.2em] text-amber-400 uppercase font-mono">
+                Campaign Operations
+              </h3>
+              <p className="mt-1 text-[8px] text-slate-400 uppercase tracking-wider">
+                Assigned aircraft are issued as mission loaners. Complete objectives before time expires.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {CAMPAIGN_MISSIONS.map(mission => {
+                const completed = progression.completedCampaignMissions?.includes(mission.id) ?? false;
+                const aircraft = DEFAULT_AIRCRAFT.find(plane => plane.id === mission.aircraftId);
+
+                return (
+                  <article
+                    key={mission.id}
+                    className={`rounded-xl border p-4 text-left flex flex-col min-h-[245px] ${
+                      completed
+                        ? "border-emerald-500/40 bg-emerald-950/15"
+                        : "border-slate-800 bg-slate-950/70"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <span className="text-[7px] font-black tracking-[0.2em] text-slate-500 uppercase">
+                          Mission {String(mission.order).padStart(2, "0")}
+                        </span>
+                        <h4 className="mt-1 text-[14px] font-black uppercase text-slate-100">
+                          {mission.name}
+                        </h4>
+                      </div>
+                      <span className={`rounded border px-2 py-1 text-[7px] font-black uppercase ${
+                        completed
+                          ? "border-emerald-500/40 text-emerald-300"
+                          : "border-amber-500/30 text-amber-300"
+                      }`}>
+                        {completed ? "Complete" : `+${mission.xpReward} XP`}
+                      </span>
+                    </div>
+
+                    <p className="mt-3 flex-1 text-[9px] leading-relaxed text-slate-400">
+                      {mission.briefing}
+                    </p>
+
+                    <div className="mt-3 space-y-1 border-y border-slate-800/80 py-3 font-mono text-[8px]">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">AIRCRAFT</span>
+                        <span className="font-bold text-slate-200">{aircraft?.name ?? mission.aircraftId}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">THEATER</span>
+                        <span className="font-bold text-slate-200">{mission.mapId}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">OBJECTIVE</span>
+                        <span className="font-bold text-amber-300">{mission.targetCount} TARGETS</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleLaunchCampaign(mission)}
+                      className="mt-3 w-full rounded-lg bg-amber-500 px-3 py-2 text-[9px] font-black tracking-[0.16em] text-slate-950 uppercase hover:bg-amber-400 active:scale-[0.98] transition-all cursor-pointer"
+                    >
+                      Launch Operation
+                    </button>
+                  </article>
                 );
               })}
             </div>
@@ -764,7 +809,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       <footer className="relative z-45 w-full bg-[#050912]/80 border-t border-slate-900/60 shadow-inner backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 py-2.5 flex flex-col md:flex-row justify-between items-center gap-3">
           
-          {/* Daily Quest & Theater Selector on Left */}
+          {/* Daily Quest on Left */}
           <div className="flex flex-wrap items-center justify-center md:justify-start gap-2">
             
             {/* Daily Quest Button & Drawer */}
@@ -774,7 +819,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   setShowQuestDrawer(!showQuestDrawer);
                   setShowLoadoutDrawer(false);
                   setShowCoinsDrawer(false);
-                  setShowTheaterDrawer(false);
                 }}
                 className="px-3 py-1.5 rounded-lg bg-slate-950/60 border border-slate-900 hover:border-slate-800 text-slate-300 hover:text-slate-100 transition-all font-mono text-[9.5px] font-bold uppercase flex items-center gap-1.5 cursor-pointer"
               >
@@ -821,85 +865,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               )}
             </div>
 
-            {/* Theater / Map Selection Button & Drawer */}
-            <div className="relative">
-              <button
-                onClick={() => {
-                  setShowTheaterDrawer(!showTheaterDrawer);
-                  setShowQuestDrawer(false);
-                  setShowLoadoutDrawer(false);
-                  setShowCoinsDrawer(false);
-                }}
-                className={`px-3 py-1.5 rounded-lg border text-[9.5px] font-black tracking-wider uppercase transition-all duration-150 flex items-center gap-1.5 cursor-pointer bg-slate-950/60 ${
-                  showTheaterDrawer
-                    ? "border-amber-500 text-amber-500 ring-2 ring-amber-500/10"
-                    : "border-slate-850 hover:border-slate-800 text-slate-350 hover:text-slate-100"
-                }`}
-              >
-                <MapPin size={11.5} className="text-amber-500" />
-                <span>THEATER: {getModeFriendlyName()} ({selectedMapId})</span>
-                <ChevronDown size={11} className="text-slate-500" />
-              </button>
-
-              {/* Theater / Map Selection popover */}
-              {showTheaterDrawer && (
-                <div className="absolute left-1/2 -translate-x-1/2 md:translate-x-0 md:left-0 bottom-11 w-[300px] bg-[#050914]/98 border border-slate-800 rounded-xl p-3 z-50 text-left backdrop-blur-xl shadow-2xl animate-scaleUp">
-                  <div className="flex justify-between items-center pb-2 mb-2 border-b border-slate-900">
-                    <span className="text-[7.5px] font-black text-slate-500 tracking-wider uppercase">Theater</span>
-                    <span className="text-[7px] text-amber-500 uppercase font-mono">4 fronts</span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {MAPS.map((map) => {
-                      const isSelected = selectedMapId === map.id;
-
-                      let mode = MatchMode.AirSupremacy;
-                      let modeLabel = "SUPREMACY";
-                      if (map.id === GameMap.StormFront) {
-                        mode = MatchMode.Intercept;
-                        modeLabel = "CARRIER DEF";
-                      } else if (map.id === GameMap.DesertCanyon) {
-                        mode = MatchMode.DuelArena;
-                        modeLabel = "CANYON FFA";
-                      } else if (map.id === GameMap.AlpineValley) {
-                        mode = MatchMode.AirSupremacy;
-                        modeLabel = "DOGFIGHT";
-                      }
-
-                      return (
-                        <div
-                          key={map.id}
-                          onClick={() => {
-                            setSelectedMapId(map.id);
-                            setSelectedMode(mode);
-                          }}
-                          className={`p-2 rounded-lg border cursor-pointer transition-all flex flex-col gap-1 ${
-                            isSelected
-                              ? "bg-amber-500/10 border-amber-500"
-                              : "bg-slate-950/60 border-slate-900 hover:border-slate-700"
-                          }`}
-                        >
-                          <div className="flex justify-between items-start gap-1">
-                            <span className={`text-[9px] font-black uppercase leading-tight ${isSelected ? "text-amber-300" : "text-slate-200"}`}>
-                              {map.name}
-                            </span>
-                            <span className={`text-[6px] font-mono font-bold uppercase shrink-0 mt-0.5 ${isSelected ? "text-amber-500" : "text-slate-600"}`}>
-                              {modeLabel}
-                            </span>
-                          </div>
-                          <div className={`flex items-center gap-2 text-[7px] font-mono ${isSelected ? "text-amber-600" : "text-slate-600"}`}>
-                            <span>CLD {Math.round(map.cloudDensity * 100)}%</span>
-                            <span>T {map.groundTargetsCount}</span>
-                            <span>AA {map.antiAirCount}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-
           </div>
 
           {/* XP Progress (Slim status center bar) */}
@@ -924,7 +889,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   setShowLoadoutDrawer(!showLoadoutDrawer);
                   setShowQuestDrawer(false);
                   setShowCoinsDrawer(false);
-                  setShowTheaterDrawer(false);
                 }}
                 className={`px-3.5 py-1.5 rounded-lg border text-[9.5px] font-black tracking-wider uppercase transition-all duration-150 flex items-center gap-1.5 cursor-pointer bg-slate-950/60 ${
                   showLoadoutDrawer

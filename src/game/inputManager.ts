@@ -53,6 +53,8 @@ export class InputManager {
   public rightMouse = false;
 
   public onCameraToggle?: () => void;
+  public onBombSightToggle?: () => void;
+  public onTacticalMapToggle?: () => void;
   public onAirbrakeToggle?: () => void;
   public onFlapsCycle?: () => void;
   public onGearToggle?: () => void;
@@ -158,6 +160,16 @@ export class InputManager {
       case "KeyC":
         this.edges.cameraPressed = true;
         this.onCameraToggle?.();
+        e.preventDefault();
+        break;
+
+      case "KeyV":
+        this.onBombSightToggle?.();
+        e.preventDefault();
+        break;
+
+      case "KeyM":
+        this.onTacticalMapToggle?.();
         e.preventDefault();
         break;
     }
@@ -282,6 +294,11 @@ export class InputManager {
     this.edges.gearPressed = false;
     this.edges.cameraPressed = false;
     this.edges.resetPressed = false;
+    this.mouseDelta = { x: 0, y: 0 };
+  }
+
+  public recenterAim() {
+    this.mousePos = { x: 0, y: 0 };
     this.mouseDelta = { x: 0, y: 0 };
   }
 

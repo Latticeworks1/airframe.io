@@ -26,3 +26,16 @@
 .hud-fps-counter[data-level="bad"] {
   color: #fb7185;
 }
+@keyframes click-to-play {
+  0%, 100% {
+    transform: scale(0.94);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+.animate-click-to-play {
+  animation: click-to-play 1.35s ease-in-out infinite;
+  transform-origin: center;
+}

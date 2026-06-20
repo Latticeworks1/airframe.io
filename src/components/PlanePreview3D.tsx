@@ -5,22 +5,23 @@
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { DEFAULT_AIRCRAFT, AIRCRAFT_DEFINITIONS, MAPS } from "../game/aircraftData";
+import { DEFAULT_AIRCRAFT, AIRCRAFT_DEFINITIONS } from "../game/aircraftData";
 import { createAircraftMesh } from "../game/content/aircraft/aircraftBuilder";
-import { GameMap } from "../types";
+import { MAP_REGISTRY } from "../game/content/maps/registry";
+import { KnownMaps, getAtmosphereSunDirection } from "../game/content/maps/mapTypes";
 
 interface PlanePreview3DProps {
   planeId: string;
   fullScreen?: boolean;
   skinId?: string;
-  mapId?: GameMap;
+  mapId?: string;
 }
 
 export function PlanePreview3D({
   planeId,
   fullScreen = false,
   skinId = "default",
-  mapId = GameMap.IslandChain
+  mapId = KnownMaps.IslandChain
 }: PlanePreview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -34,39 +35,23 @@ export function PlanePreview3D({
     // 1. Scene setup
     const scene = new THREE.Scene();
 
-    // Map specs and thematic configurations
-    const mapSpecs = MAPS.find((m) => m.id === mapId) || MAPS[0];
+    const mapDef = MAP_REGISTRY[mapId] ?? MAP_REGISTRY[KnownMaps.IslandChain];
+    const atmosphere = mapDef.atmosphere;
 
-    // Select custom slate bg color theme based on operations theater to look integrated with the pilot overlay HUD
-    let lobbyBgHex = "#03060c";
-    if (mapId === GameMap.IslandChain) {
-      lobbyBgHex = "#040e1d";
-    } else if (mapId === GameMap.DesertCanyon) {
-      lobbyBgHex = "#1a0f05";
-    } else if (mapId === GameMap.AlpineValley) {
-      lobbyBgHex = "#0b1018";
-    } else if (mapId === GameMap.StormFront) {
-      lobbyBgHex = "#030509";
-    }
-
-    scene.background = new THREE.Color(lobbyBgHex);
-
-    // Setup linear atmospheric fog with blending horizon color and comfortable depth limit so front plane is sharp
-    let envFogColor = "#bae6fd";
-    if (mapId === GameMap.IslandChain) {
-      envFogColor = "#60a5fa"; // Rich beautiful cyan-blue horizon fog
-    } else if (mapId === GameMap.DesertCanyon) {
-      envFogColor = "#fdba74"; // Warm sunset desert orange-yellow
-    } else if (mapId === GameMap.AlpineValley) {
-      envFogColor = "#94a3b8"; // Crisp high-altitude slate slate gray
-    } else if (mapId === GameMap.StormFront) {
-      envFogColor = "#020617"; // Black-blue storm horizon fog
-    }
+    scene.background = new THREE.Color(atmosphere.preview.backgroundColor);
 
     if (fullScreen) {
-      scene.fog = new THREE.Fog(envFogColor, 28, 90);
+      scene.fog = new THREE.Fog(
+        atmosphere.fogColor,
+        atmosphere.preview.fogNear,
+        atmosphere.preview.fogFar
+      );
     } else {
-      scene.fog = new THREE.Fog(envFogColor, 18, 55);
+      scene.fog = new THREE.Fog(
+        atmosphere.fogColor,
+        atmosphere.preview.fogNear * 0.65,
+        atmosphere.preview.fogFar * 0.62
+      );
     }
 
     // 2. Camera setup
@@ -89,49 +74,29 @@ export function PlanePreview3D({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     container.appendChild(renderer.domElement);
 
-    // 4. Lighting - Sleek aerospace display-showroom setup
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    // Preview lighting uses the same sun and sky colors as the flight renderer.
+    const ambientLight = new THREE.HemisphereLight(
+      atmosphere.skyLightColor,
+      atmosphere.groundLightColor,
+      atmosphere.ambientIntensity * 0.72
+    );
     scene.add(ambientLight);
 
-    const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.25);
-    dirLight1.position.set(20, 30, 15);
+    const dirLight1 = new THREE.DirectionalLight(
+      atmosphere.sunColor,
+      atmosphere.sunIntensity
+    );
+    dirLight1.position
+      .copy(getAtmosphereSunDirection(atmosphere))
+      .multiplyScalar(45);
     scene.add(dirLight1);
 
-    const dirLight2 = new THREE.DirectionalLight(0xffd700, 0.35); // subtle gold warm side-light
+    const dirLight2 = new THREE.DirectionalLight(
+      atmosphere.preview.fillLightColor,
+      atmosphere.preview.fillLightIntensity
+    );
     dirLight2.position.set(-20, -10, -15);
     scene.add(dirLight2);
-
-    // Light custom theme modifications matching active map
-    if (mapId === GameMap.DesertCanyon) {
-      ambientLight.color.setHex(0xffedd5);
-      ambientLight.intensity = 0.55;
-      dirLight1.color.setHex(0xfdba74);
-      dirLight1.intensity = 1.4;
-      dirLight2.color.setHex(0xc2410c);
-      dirLight2.intensity = 0.45;
-    } else if (mapId === GameMap.AlpineValley) {
-      ambientLight.color.setHex(0xe0f2fe);
-      ambientLight.intensity = 0.6;
-      dirLight1.color.setHex(0xffffff);
-      dirLight1.intensity = 1.35;
-      dirLight2.color.setHex(0x38bdf8);
-      dirLight2.intensity = 0.45;
-    } else if (mapId === GameMap.StormFront) {
-      ambientLight.color.setHex(0x1e293b);
-      ambientLight.intensity = 0.25;
-      dirLight1.color.setHex(0x94a3b8);
-      dirLight1.intensity = 0.4;
-      dirLight2.color.setHex(0x0f172a);
-      dirLight2.intensity = 0.1;
-    } else {
-      // IslandChain - default tropical bright setup
-      ambientLight.color.setHex(0xffffff);
-      ambientLight.intensity = 0.45;
-      dirLight1.color.setHex(0xbae6fd);
-      dirLight1.intensity = 1.3;
-      dirLight2.color.setHex(0x0ea5e9);
-      dirLight2.intensity = 0.35;
-    }
 
     // Find SPEC details for active aircraft
     const spec = DEFAULT_AIRCRAFT.find((a) => a.id === planeId) || DEFAULT_AIRCRAFT[0];
@@ -191,23 +156,18 @@ export function PlanePreview3D({
     const skyCtx = skyCanvas.getContext("2d");
     if (skyCtx) {
       const gradient = skyCtx.createLinearGradient(0, 0, 0, skyCanvas.height);
-      if (mapId === GameMap.IslandChain) {
-        gradient.addColorStop(0, "#014e7a"); // Top: deep ocean sky
-        gradient.addColorStop(0.5, "#0ea5e9"); // Middle: tropical blue
-        gradient.addColorStop(1, "#bae6fd"); // Horizon: light warm cyan
-      } else if (mapId === GameMap.DesertCanyon) {
-        gradient.addColorStop(0, "#2c1c0a"); // Top: dusty twilight
-        gradient.addColorStop(0.5, "#ca6a14"); // Middle: scorched sand sunset
-        gradient.addColorStop(1, "#fed7aa"); // Horizon: sand glow
-      } else if (mapId === GameMap.AlpineValley) {
-        gradient.addColorStop(0, "#0f172a"); // Top: cold deep space navy
-        gradient.addColorStop(0.5, "#3b82f6"); // Middle: clear high altitude blue
-        gradient.addColorStop(1, "#f1f5f9"); // Horizon: icy glare
-      } else { // StormFront
-        gradient.addColorStop(0, "#020617"); // Top: absolute black storm core
-        gradient.addColorStop(0.5, "#0f172a"); // Middle: thundercloud slate
-        gradient.addColorStop(1, "#1e293b"); // Horizon: misty dim sea line
-      }
+      gradient.addColorStop(
+        0,
+        new THREE.Color(atmosphere.preview.skyGradient[0]).getStyle()
+      );
+      gradient.addColorStop(
+        0.5,
+        new THREE.Color(atmosphere.preview.skyGradient[1]).getStyle()
+      );
+      gradient.addColorStop(
+        1,
+        new THREE.Color(atmosphere.preview.skyGradient[2]).getStyle()
+      );
       skyCtx.fillStyle = gradient;
       skyCtx.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
     }
@@ -227,6 +187,7 @@ export function PlanePreview3D({
     const starGeometry = new THREE.BufferGeometry();
     const starPositions = new Float32Array(particlesCount * 3);
     const starColors = new Float32Array(particlesCount * 3);
+    const starBaseColor = new THREE.Color(atmosphere.preview.starColor);
 
     for (let i = 0; i < particlesCount; i++) {
       // Position particles in a random dome above the horizon
@@ -237,24 +198,10 @@ export function PlanePreview3D({
       starPositions[i * 3 + 1] = Math.abs(r * Math.sin(phi) * Math.sin(theta)) + 1.5;
       starPositions[i * 3 + 2] = r * Math.cos(phi);
 
-      // Star color matching active theater maps
-      if (mapId === GameMap.DesertCanyon) {
-        starColors[i * 3] = 1.0;
-        starColors[i * 3 + 1] = 0.8 + Math.random() * 0.2;
-        starColors[i * 3 + 2] = 0.55;
-      } else if (mapId === GameMap.AlpineValley) {
-        starColors[i * 3] = 0.85;
-        starColors[i * 3 + 1] = 0.95;
-        starColors[i * 3 + 2] = 1.0;
-      } else if (mapId === GameMap.StormFront) {
-        starColors[i * 3] = 0.7;
-        starColors[i * 3 + 1] = 0.85;
-        starColors[i * 3 + 2] = 1.0; // electric lightning blue
-      } else {
-        starColors[i * 3] = 0.9;
-        starColors[i * 3 + 1] = 0.95;
-        starColors[i * 3 + 2] = 1.0;
-      }
+      const brightness = 0.72 + Math.random() * 0.28;
+      starColors[i * 3] = starBaseColor.r * brightness;
+      starColors[i * 3 + 1] = starBaseColor.g * brightness;
+      starColors[i * 3 + 2] = starBaseColor.b * brightness;
     }
 
     starGeometry.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
@@ -264,7 +211,7 @@ export function PlanePreview3D({
       size: 0.18,
       vertexColors: true,
       transparent: true,
-      opacity: 0.85,
+      opacity: atmosphere.preview.starOpacity,
       sizeAttenuation: true,
       fog: false // Stars remain brilliant
     });
@@ -274,7 +221,7 @@ export function PlanePreview3D({
 
     const stormCloudsList: THREE.Mesh[] = [];
 
-    if (mapId === GameMap.IslandChain) {
+    if (mapId === KnownMaps.IslandChain) {
       // Ocean far below
       const oceanGeo = new THREE.PlaneGeometry(160, 160);
       const oceanMat = new THREE.MeshStandardMaterial({
@@ -322,7 +269,7 @@ export function PlanePreview3D({
       deckGroup.add(rightLine);
 
       envGroup.add(deckGroup);
-    } else if (mapId === GameMap.DesertCanyon) {
+    } else if (mapId === KnownMaps.DesertCanyon) {
       // Sandy desert deck
       const sandGeo = new THREE.PlaneGeometry(160, 160);
       const sandMat = new THREE.MeshStandardMaterial({
@@ -350,7 +297,7 @@ export function PlanePreview3D({
         rMesh.position.set(side * (10 + Math.random() * 5), -10 + rH / 2, -25 + (i * 7));
         envGroup.add(rMesh);
       }
-    } else if (mapId === GameMap.AlpineValley) {
+    } else if (mapId === KnownMaps.AlpineValley) {
       // Snowy mountain field
       const snowyGeo = new THREE.PlaneGeometry(160, 160);
       const snowyMat = new THREE.MeshStandardMaterial({
@@ -383,7 +330,7 @@ export function PlanePreview3D({
         peak.position.set(side * (11 + Math.random() * 5), -10 + rH / 2, -28 + (i * 8));
         envGroup.add(peak);
       }
-    } else if (mapId === GameMap.StormFront) {
+    } else if (mapId === KnownMaps.StormFront) {
       // Dark sea floor
       const stormSeaGeo = new THREE.PlaneGeometry(160, 160);
       const stormSeaMat = new THREE.MeshStandardMaterial({
@@ -419,7 +366,7 @@ export function PlanePreview3D({
 
       // Procedural grey storm clouds
       const cloudMat = new THREE.MeshStandardMaterial({
-        color: 0x1f2937,
+        color: atmosphere.cloudField.shadowColor,
         roughness: 0.9,
         transparent: true,
         opacity: 0.65
@@ -441,6 +388,11 @@ export function PlanePreview3D({
 
     let isFlashing = false;
     let flashTime = 0;
+    let nextLightningTime = THREE.MathUtils.lerp(
+      atmosphere.lightning.minDelay,
+      atmosphere.lightning.maxDelay,
+      Math.random()
+    );
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
@@ -465,11 +417,13 @@ export function PlanePreview3D({
 
       // Interactive twinkling ambient stars
       if (starMaterial) {
-        starMaterial.opacity = 0.65 + Math.sin(elapsedTime * 2.8) * 0.25;
+        starMaterial.opacity =
+          atmosphere.preview.starOpacity *
+          (0.8 + Math.sin(elapsedTime * 2.8) * 0.2);
       }
 
       // Storm cloud drift animation
-      if (mapId === GameMap.StormFront && stormCloudsList.length > 0) {
+      if (mapId === KnownMaps.StormFront && stormCloudsList.length > 0) {
         stormCloudsList.forEach((c) => {
           c.position.z += 0.02;
           if (c.position.z > 20) {
@@ -479,31 +433,38 @@ export function PlanePreview3D({
       }
 
       // Lightning Thunder Flash Double strike
-      if (mapId === GameMap.StormFront) {
-        if (Math.random() < 0.0035 && !isFlashing) {
+      if (atmosphere.lightning.enabled) {
+        if (elapsedTime >= nextLightningTime && !isFlashing) {
           isFlashing = true;
           flashTime = elapsedTime;
+          nextLightningTime =
+            elapsedTime +
+            THREE.MathUtils.lerp(
+              atmosphere.lightning.minDelay,
+              atmosphere.lightning.maxDelay,
+              Math.random()
+            );
         }
         if (isFlashing) {
           const delta = elapsedTime - flashTime;
           if (delta < 0.08) {
             dirLight1.intensity = 2.8;
             ambientLight.intensity = 1.6;
-            ambientLight.color.setHex(0xf1f5f9); // bright pure white strike
+            ambientLight.color.set(atmosphere.lightning.color);
           } else if (delta < 0.16) {
             dirLight1.intensity = 0.2;
             ambientLight.intensity = 0.2;
           } else if (delta < 0.26) {
             dirLight1.intensity = 2.2;
             ambientLight.intensity = 1.3;
-            ambientLight.color.setHex(0xf1f5f9); // second shock strike
+            ambientLight.color.set(atmosphere.lightning.color);
           } else {
             isFlashing = false;
-            // Restore storm front dim state
-            ambientLight.color.setHex(0x1e293b);
-            ambientLight.intensity = 0.25;
-            dirLight1.color.setHex(0x94a3b8);
-            dirLight1.intensity = 0.4;
+            ambientLight.color.set(atmosphere.skyLightColor);
+            ambientLight.groundColor.set(atmosphere.groundLightColor);
+            ambientLight.intensity = atmosphere.ambientIntensity * 0.72;
+            dirLight1.color.set(atmosphere.sunColor);
+            dirLight1.intensity = atmosphere.sunIntensity;
           }
         }
       }

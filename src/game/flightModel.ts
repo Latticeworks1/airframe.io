@@ -4,14 +4,22 @@
  */
 
 import { Vector3, Quaternion, Euler, MathUtils } from "three";
-import { Pilot, FlightCommand, AircraftSpecs, GameMap } from "../types";
+import { Pilot, FlightCommand, AircraftSpecs } from "../types";
 import { AerodynamicsEngine } from "./aeroSurfaceModel";
 import { getTerrainHeight } from "./terrainModel";
-import { LOCAL_FORWARD, LOCAL_UP, LOCAL_RIGHT, airDensityAtAltitude } from "./math";
-import { MAP_DEFINITIONS } from "./content/maps/mapDefinitions";
+import { MAP_REGISTRY } from "./content/maps/registry";
+import { KnownMaps } from "./content/maps/mapTypes";
+import {
+  LOCAL_FORWARD,
+  LOCAL_UP,
+  LOCAL_RIGHT,
+  safeNormalize,
+  airDensityAtAltitude
+} from "./math";
 
 const G = 9.81;
-const SEA_LEVEL_AIR_DENSITY = 1.225;
+
+// AXIS CONTRACT
 
 function getAircraftQuaternion(pitch: number, yaw: number, roll: number) {
   return new Quaternion().setFromEuler(new Euler(pitch, yaw, roll, "YXZ"));
@@ -39,7 +47,8 @@ function approach(current: number, target: number, rate: number, dt: number): nu
 }
 
 function getAoA(localVelocity: Vector3) {
-  // Aircraft local +Z is nose-forward. Positive AoA means nose above flight path.
+  // Aircraft local +Z is nose-forward.
+  // Positive AoA means nose above flight path.
   return Math.atan2(-localVelocity.y, localVelocity.z);
 }
 
@@ -88,7 +97,7 @@ export function applyModifications(
       modified.mass *= 1.05;
       modified.cd0 *= 1.02;
     } else if (id === "polished-guns") {
-      modified.aileronBoost = Math.min(1.5, (modified.aileronBoost ?? 1.0) * 1.10);
+      modified.rollRateDegPerSec = (modified.rollRateDegPerSec ?? 90) * 1.1;
     }
   });
 
@@ -107,24 +116,16 @@ export function updateFlightPhysics(
   pilot: Pilot,
   command: FlightCommand,
   dt: number,
-  mapId: GameMap = GameMap.IslandChain
+  mapId: string = KnownMaps.IslandChain
 ) {
   if (dt <= 0) return;
   dt = Math.min(dt, 0.05);
 
-  pilot.physicsTime = (pilot.physicsTime ?? 0) + dt;
-  const simTime = pilot.physicsTime;
-
   const specs = applyModifications(pilot.specs, pilot.modifications);
 
-  const wingArea = requireSpecInRange(specs, "wingArea", 8, 70);
-  const aspectRatio = requireSpecInRange(specs, "aspectRatio", 3, 12);
-  const oswaldEfficiency = requireSpecInRange(
-    specs,
-    "oswaldEfficiency",
-    0.55,
-    0.95
-  );
+  requireSpecInRange(specs, "wingArea", 8, 70);
+  requireSpecInRange(specs, "aspectRatio", 3, 12);
+  requireSpecInRange(specs, "oswaldEfficiency", 0.55, 0.95);
 
   const pos = new Vector3(pilot.x, pilot.y, pilot.z);
   const vel = new Vector3(pilot.vx, pilot.vy, pilot.vz);
@@ -132,7 +133,7 @@ export function updateFlightPhysics(
   let speed = vel.length();
   let speedKmph = speed * 3.6;
 
-  let { q, forward, up, right } = getAircraftBasis(
+  let { q, forward } = getAircraftBasis(
     pilot.pitch,
     pilot.yaw,
     pilot.roll
@@ -175,57 +176,54 @@ export function updateFlightPhysics(
   pilot.gearDeployed = command.gearDeployed;
 
   // Physical separation: Raw input -> Pilot Intent -> Actuator Deflection rate limit
-  pilot.pitchIntent = approach(pilot.pitchIntent ?? 0, pitchInput, 8.0, dt);
-  pilot.rollIntent = approach(pilot.rollIntent ?? 0, rollInput, 10.0, dt);
-  pilot.yawIntent = approach(pilot.yawIntent ?? 0, yawInput, 5.0, dt);
+  pilot.pitchIntent = approach(pilot.pitchIntent ?? 0, pitchInput, 3.2, dt);
+  pilot.rollIntent = approach(pilot.rollIntent ?? 0, rollInput, 4.2, dt);
+  pilot.yawIntent = approach(pilot.yawIntent ?? 0, yawInput, 2.2, dt);
 
   // Surfaces actuator physical lag
-  pilot.elevatorDeflection = approach(pilot.elevatorDeflection ?? 0, pilot.pitchIntent, 12.0, dt);
-  pilot.aileronDeflection = approach(pilot.aileronDeflection ?? 0, pilot.rollIntent, 14.0, dt);
-  pilot.rudderDeflection = approach(pilot.rudderDeflection ?? 0, pilot.yawIntent, 8.0, dt);
+  pilot.elevatorDeflection = approach(pilot.elevatorDeflection ?? 0, pilot.pitchIntent, 4.5, dt);
+  pilot.aileronDeflection = approach(pilot.aileronDeflection ?? 0, pilot.rollIntent, 5.5, dt);
+  pilot.rudderDeflection = approach(pilot.rudderDeflection ?? 0, pilot.yawIntent, 3.8, dt);
 
   // Apply continuous smoothed surface deflections downstream
   pitchInput = pilot.elevatorDeflection;
   rollInput = pilot.aileronDeflection;
   yawInput = pilot.rudderDeflection;
 
-  // Damage and stall scale the control surface deflections sent to the aero model.
-  // Cockpit damage reduces pilot authority over all axes; stall collapses elevator grip.
-  const stallSev = pilot.stallSeverity ?? 0;
-  const stallInputScale = MathUtils.lerp(1.0, 0.40, MathUtils.clamp(stallSev, 0, 1));
-  const pitchScale = (0.3 + 0.7 * tailHealth) * controlFactor * stallInputScale;
-  const rollScale  = (0.4 + 0.6 * wingHealth) * controlFactor;
-  const yawScale   = (0.3 + 0.7 * tailHealth) * controlFactor;
+  const currentPitchRate =
+    (specs.pitchRateDegPerSec ?? 45) * (0.3 + 0.7 * tailHealth) * controlFactor;
 
-  // Auto turn coordination — couple roll into rudder so banked turns stay coordinated.
-  const autoRudder = rollInput * 0.35;
+  const currentRollRate =
+    (specs.rollRateDegPerSec ?? 90) * (0.4 + 0.6 * wingHealth) * controlFactor;
 
-  // Active Angular Velocity — persistent rigid-body state (X = Pitch, Y = Yaw, Z = Roll)
+  const currentYawRate =
+    (specs.yawRateDegPerSec ?? 30) * (0.3 + 0.7 * tailHealth) * controlFactor;
+
+  // Active Angular Velocity matching pilot model (X = Pitch, Y = Yaw, Z = Roll)
   const localAngularVelocity = new Vector3(
-    pilot.avx ?? 0,
-    pilot.avy ?? 0,
-    pilot.avz ?? 0
+    pilot.avx ?? 0, // pitch
+    pilot.avy ?? 0, // yaw
+    pilot.avz ?? 0  // roll
   );
 
   const terrainInfo = getTerrainHeight(pos.x, pos.z, mapId);
   const altitudeAGL = Math.max(0, pos.y - terrainInfo.height);
 
-  // Surface deflections sent to aero — damage and stall scale them directly here
-  // so control authority loss is physically expressed as reduced surface angle, not
-  // as a post-hoc scalar on an arcade rate target.
+  // Invoke high-fidelity aero surface calculations
   const aero = AerodynamicsEngine.computeForces({
     pilot,
     specs,
     controls: {
-      pitchInput: pitchInput * pitchScale,
-      rollInput:  rollInput  * rollScale,
-      yawInput:   (yawInput + autoRudder) * yawScale,
+      pitchInput,
+      rollInput,
+      yawInput,
       airbrake: !!airbrake
     },
     localAngularVelocity,
     altitudeAGL
   });
 
+  // Calculate pre-rotation airspeed and angles to determine stall conditions accurately
   const wind = new Vector3(0, 0, 0);
   const airVelocityWorld = vel.clone().sub(wind);
   const airspeed = airVelocityWorld.length();
@@ -237,41 +235,32 @@ export function updateFlightPhysics(
   const initialAlpha = getAoA(initialLocalVelocity);
   const initialAlphaDeg = Math.abs(MathUtils.radToDeg(initialAlpha));
 
-  const localVelSpeed = initialLocalVelocity.length();
+  const isStallingByAoA = initialAlphaDeg > 17.5;
+  const isSupportedByGround = altitudeAGL <= 1.5;
+  const isCurrentlyStalled = !isSupportedByGround && (isStallingByAoA || (airspeedKmph < specs.stallSpeedKmph));
 
-  // Symmetric stall: both wings simultaneously exceeding critical AoA due to high pitch —
-  // triggers full stall effects (buffet, authority loss, recovery torque).
-  // Asymmetric: one wing locally stalled (e.g. roll-rate-induced tip stall at moderate
-  // pitch AoA) — produces directed wing drop only, no elevator authority collapse.
-  const symmetricStall = aero.leftWingStalled && aero.rightWingStalled;
-  const asymmetricStall = aero.leftWingStalled !== aero.rightWingStalled;
-  const stalledWingSide = (aero.rightWingStalled && !aero.leftWingStalled) ? 1 : -1;
-  const isStallingByAoA = symmetricStall;
-  const isCurrentlyStalled = isStallingByAoA || (airspeedKmph < specs.stallSpeedKmph);
-
-  // Euler's rigid-body moment equations: τ = I·dω/dt + ω×(I·ω).
-  // In principal axes (Ixz≈0 for symmetric aircraft), for axes 1=X(pitch), 2=Y(yaw), 3=Z(roll):
-  //   dω₁/dt = (M₁ - (I₃-I₂)·ω₂·ω₃) / I₁
-  //   dω₂/dt = (M₂ - (I₁-I₃)·ω₃·ω₁) / I₂
-  //   dω₃/dt = (M₃ - (I₂-I₁)·ω₁·ω₂) / I₃
+  // 1. Aerodynamic and structural restoring moments accelerate local angular rates
   const inertiaVal = AerodynamicsEngine.estimateInertia(specs);
-  const Ip = inertiaVal.x; // pitch inertia (about X, wing-to-wing axis)
-  const Iy = inertiaVal.y; // yaw inertia   (about Y, vertical axis)
-  const Ir = inertiaVal.z; // roll inertia  (about Z, nose axis)
-  const avq = localAngularVelocity.x; // pitch rate (ω₁)
-  const avr = localAngularVelocity.y; // yaw rate   (ω₂)
-  const avp = localAngularVelocity.z; // roll rate  (ω₃)
-  // d(pitch)/dt = (torque_x - (Ir-Iy)·avr·avp) / Ip
-  localAngularVelocity.x += (aero.torque.x - avr * avp * (Ir - Iy)) / Math.max(1, Ip) * dt;
-  // d(yaw)/dt   = (torque_y - (Ip-Ir)·avp·avq) / Iy
-  localAngularVelocity.y += (aero.torque.y - avp * avq * (Ip - Ir)) / Math.max(1, Iy) * dt;
-  // d(roll)/dt  = (torque_z - (Iy-Ip)·avq·avr) / Ir
-  localAngularVelocity.z += (aero.torque.z - avq * avr * (Iy - Ip)) / Math.max(1, Ir) * dt;
+  localAngularVelocity.x += (aero.torque.x / Math.max(1, inertiaVal.x)) * dt; // Pitch rate (around X)
+  localAngularVelocity.y += (aero.torque.y / Math.max(1, inertiaVal.y)) * dt; // Yaw rate (around Y)
+  localAngularVelocity.z += (aero.torque.z / Math.max(1, inertiaVal.z)) * dt; // Roll rate (around Z)
 
   const maxRateLimit = 6.0;
   localAngularVelocity.x = MathUtils.clamp(localAngularVelocity.x, -maxRateLimit, maxRateLimit);
   localAngularVelocity.y = MathUtils.clamp(localAngularVelocity.y, -maxRateLimit, maxRateLimit);
   localAngularVelocity.z = MathUtils.clamp(localAngularVelocity.z, -maxRateLimit, maxRateLimit);
+
+  // 2. Control authority rolls off realistically at low speeds to simulate lack of over-wing flow
+  const controlAuthority = MathUtils.clamp((airspeedKmph / specs.stallSpeedKmph) * 1.12, 0.04, 1.25);
+
+  const directPitchRate = -pitchInput * (currentPitchRate * Math.PI / 180) * controlAuthority;
+  const directYawRate = -yawInput * (currentYawRate * Math.PI / 180) * controlAuthority;
+  const directRollRate = rollInput * (currentRollRate * Math.PI / 180) * controlAuthority;
+
+  // Blending direct arcade assist (35%) and full rigid-body torque integration (65%)
+  const finalPitchRate = MathUtils.lerp(localAngularVelocity.x, directPitchRate, 0.35); // Pitch (local X)
+  const finalYawRate = MathUtils.lerp(localAngularVelocity.y, directYawRate, 0.35);   // Yaw (local Y)
+  const finalRollRate = MathUtils.lerp(localAngularVelocity.z, directRollRate, 0.35);  // Roll (local Z)
 
   // 3. Inject realistic Stall Buffeting & Wing Drop instability
   let stallBuffetRoll = 0;
@@ -289,54 +278,26 @@ export function updateFlightPhysics(
     );
 
     // High frequency buffeting (structural shaking)
-    const shakeTime = simTime;
+    const shakeTime = Date.now() * 0.001;
     const buffetFreq = 25.0; // 25 Hz structural flutter
     const buffetAmp = pilot.stallSeverity * 0.32;
     stallBuffetRoll = Math.sin(shakeTime * (buffetFreq + 1.2)) * buffetAmp;       // Z axis
     stallBuffetPitch = Math.cos(shakeTime * buffetFreq) * buffetAmp * 0.75;       // X axis
     stallBuffetYaw = Math.sin(shakeTime * (buffetFreq - 4.0)) * buffetAmp * 0.22; // Y axis
 
-    // Symmetric wing drop and static-margin recovery.
+    // Wing drop spins: when stalled, steering actions or minor slips flip the wing into an uncontrolled roll and deep dive
     if (airspeedKmph > 18) {
-      const spinRate = localAngularVelocity.length();
-      const spinSaturation = Math.max(0, 1 - spinRate / 2.5);
-      const dropFreq = simTime * 1.5;
-      const wingDropAccel = pilot.stallSeverity * 1.2 * spinSaturation;
-      localAngularVelocity.z += Math.sin(dropFreq) * wingDropAccel * dt;
-      localAngularVelocity.y += Math.cos(dropFreq + 1.1) * wingDropAccel * 0.3 * dt;
-
-      if (localVelSpeed > 5) {
-        const velDirLocal = initialLocalVelocity.clone().normalize();
-        const rotAxis = new Vector3(0, 0, 1).cross(velDirLocal);
-        const sinA = rotAxis.length();
-        if (sinA > 0.02) {
-          rotAxis.divideScalar(sinA);
-          const recoveryRate = 2.0 * pilot.stallSeverity;
-          localAngularVelocity.x += rotAxis.x * recoveryRate * dt;
-          localAngularVelocity.y += rotAxis.y * recoveryRate * dt;
-          localAngularVelocity.z += rotAxis.z * recoveryRate * dt;
-        }
-      }
+      const dropFreq = Date.now() * 0.0015;
+      const wingDropFactor = pilot.stallSeverity * (specs.rollRateDegPerSec ?? 90) * (Math.PI / 180) * 1.6;
+      localAngularVelocity.z += Math.sin(dropFreq) * wingDropFactor * dt; // Z is roll
+      localAngularVelocity.y += Math.cos(dropFreq + 1.1) * wingDropFactor * 0.35 * dt; // Y is yaw
+      // Nose-heavy center-of-gravity moment forces a rapid pitching drop to recover airspeed
+      localAngularVelocity.x -= 0.72 * pilot.stallSeverity * dt; // X is pitch
     }
   } else {
     pilot.isStalling = false;
     pilot.stallSeverity = 0;
   }
-
-  // Asymmetric stall: one wing stalled while the other is attached — produces a
-  // directed roll toward the stalled side without triggering full-stall authority loss.
-  if (asymmetricStall && !isCurrentlyStalled && airspeedKmph > 18) {
-    const spinRate = localAngularVelocity.length();
-    const spinSaturation = Math.max(0, 1 - spinRate / 2.5);
-    localAngularVelocity.z += stalledWingSide * 0.8 * spinSaturation * dt;
-  }
-
-  // Capture rates after stall torques have been applied so wing-drop and
-  // static-margin recovery contribute to both orientation integration and
-  // the angular velocity state carried into the next tick.
-  const finalPitchRate = localAngularVelocity.x;
-  const finalYawRate   = localAngularVelocity.y;
-  const finalRollRate  = localAngularVelocity.z;
 
   // Combine integrated rates, inputs and buffeting components
   const totalPitchRate = finalPitchRate + stallBuffetPitch; // Pitch is X
@@ -372,7 +333,7 @@ export function updateFlightPhysics(
   pilot.avz = finalRollRate;  // Z is roll
 
   // Recalculate 3D basis vectors
-  ({ q, forward, up, right } = getAircraftBasis(
+  ({ q, forward } = getAircraftBasis(
     pilot.pitch,
     pilot.yaw,
     pilot.roll
@@ -386,48 +347,64 @@ export function updateFlightPhysics(
 
   // 1. Compute engine thrust and apply altitude power dropoff
   const altitudePower = MathUtils.clamp(
-    rho / SEA_LEVEL_AIR_DENSITY,
+    rho / 1.225,
     0.35,
     1.0
   );
 
   const throttle01 = MathUtils.clamp(pilot.throttle, 0, 1.0);
   const thrustBoost = boost ? 1.08 : 1.0;
+  // Propeller thrust falls as forward speed approaches the aircraft's design
+  // envelope. Without this lapse, constant static thrust remains available at
+  // every speed and the high-power aircraft accelerate beyond 1,000 km/h.
+  const envelopeRatio = speedKmph / Math.max(1, specs.structuralLimitSpeedKmph);
+  const thrustSpeedLapse = MathUtils.clamp(
+    1 - 0.72 * envelopeRatio * envelopeRatio,
+    0.18,
+    1
+  );
 
   const actualThrust =
     specs.maxThrust *
     throttle01 *
     engineHealth *
     altitudePower *
-    thrustBoost;
+    thrustBoost *
+    thrustSpeedLapse;
 
   const thrustForce = forward.clone().multiplyScalar(actualThrust);
   const gravityForce = new Vector3(0, -specs.mass * G, 0);
 
-  // Fuselage body drag: at high AoA or sideslip the fuselage side presents as a bluff body,
-  // creating drag that opposes any velocity component perpendicular to the nose axis (+Z).
-  // This is what prevents spin divergence in the real aircraft — the surface aero model only
-  // covers wings and control surfaces, not the fuselage cross-section.
-  const invQ = q.clone().invert();
-  const localVelForFus = vel.clone().applyQuaternion(invQ);
-  const transLocalVel = new Vector3(localVelForFus.x, localVelForFus.y, 0);
-  const transSpeed = transLocalVel.length();
-  let fuselageDragForce = new Vector3();
-  if (transSpeed > 0.5) {
-    const transDir = transLocalVel.clone().normalize().applyQuaternion(q);
-    const fusDragMag = 0.5 * rho * transSpeed * transSpeed * specs.wingArea * 0.22;
-    fuselageDragForce = transDir.multiplyScalar(-fusDragMag);
-  }
-
-  // 2. Sum physical forces (Thrust + Gravity + surface aero forces + fuselage body drag)
+  // 2. Sum physical forces (Thrust + Gravity + component aero surface forces)
+  // aero.force integrates Lift, Drag, Sideslip, induced drag, and global gear/airbrake forces computed per-surface!
   const totalForce = new Vector3()
     .add(thrustForce)
     .add(gravityForce)
-    .add(aero.force)
-    .add(fuselageDragForce);
+    .add(aero.force);
 
   const accel = totalForce.divideScalar(specs.mass);
   vel.addScaledVector(accel, dt);
+
+  const stalled = pilot.isStalling ?? false;
+
+  let alignmentAlpha = MathUtils.clamp(
+    (airspeedKmph / Math.max(1, specs.stallSpeedKmph)) * 0.08,
+    0.01,
+    0.12
+  );
+
+  if (stalled) {
+    alignmentAlpha *= 0.35;
+  }
+
+  const newSpeed = vel.length();
+  const travelDir = safeNormalize(vel.clone(), forward);
+  const blendedDir = travelDir
+    .clone()
+    .lerp(forward, alignmentAlpha)
+    .normalize();
+
+  vel.copy(blendedDir).multiplyScalar(newSpeed);
 
   if (speedKmph > specs.structuralLimitSpeedKmph) {
     const excess = speedKmph - specs.structuralLimitSpeedKmph;
@@ -521,7 +498,7 @@ export function updateFlightPhysics(
     }
   }
 
-  const maxAltitude = MAP_DEFINITIONS[mapId].world.maxAltitude;
+  const maxAltitude = MAP_REGISTRY[mapId]?.world.maxAltitude ?? 7500;
 
   if (pos.y > maxAltitude) {
     pos.y = maxAltitude;
@@ -537,22 +514,6 @@ export function updateFlightPhysics(
       pilot.damage.hasFire = false;
     }
   }
-
-  pilot.physicsDebug = {
-    aoaDeg:            aero.aoaDeg,
-    sideslipDeg:       aero.sideslipDeg,
-    mach:              aero.mach,
-    dynamicPressure:   aero.dynamicPressure,
-    aeroTorqueX:       aero.torque.x,
-    aeroTorqueY:       aero.torque.y,
-    aeroTorqueZ:       aero.torque.z,
-    leftWingStalled:   aero.leftWingStalled,
-    rightWingStalled:  aero.rightWingStalled,
-    stallSeverity:     pilot.stallSeverity ?? 0,
-    elevatorDeflection: pilot.elevatorDeflection ?? 0,
-    aileronDeflection:  pilot.aileronDeflection ?? 0,
-    rudderDeflection:   pilot.rudderDeflection ?? 0,
-  };
 
   pilot.x = pos.x;
   pilot.y = pos.y;
