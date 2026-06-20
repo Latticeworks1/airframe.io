@@ -1,6 +1,13 @@
 FROM python:3.11-slim
 
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -m -u 1000 user
+
 USER user
 
 ENV PATH="/home/user/.local/bin:$PATH"
