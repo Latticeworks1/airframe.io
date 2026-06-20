@@ -9,11 +9,19 @@ import {
   KillEvent,
   SkyZone,
   MatchMode,
+  CameraMode,
+  BombSightInfo,
+  CampaignMissionState,
+  WeaponType,
+  GroundTarget,
 } from "../types";
 import { Crosshair, MapPin, Zap } from "lucide-react";
+import { MAP_REGISTRY } from "../game/content/maps/registry";
 
 interface HUDProps {
   playerPilot: Pilot | undefined;
+  pilots: Pilot[];
+  groundTargets: GroundTarget[];
   skyZones: SkyZone[];
   killFeed: KillEvent[];
   team1Score: number;
@@ -25,10 +33,14 @@ interface HUDProps {
   invertMouseX?: boolean;
   onToggleInvertMouseX?: () => void;
   onExit: () => void;
-  cameraMode: "third-person" | "first-person";
-  onToggleCameraMode: () => void;
+  cameraMode: CameraMode;
   inputFrame?: any;
   hitmarker?: { active: boolean; type: "air" | "ground"; key: number };
+  bombSightInfo?: BombSightInfo | null;
+  campaignState?: CampaignMissionState | null;
+  mapId: string;
+  showTacticalMap: boolean;
+  onCloseTacticalMap: () => void;
 }
 
 function clamp(n: number, min: number, max: number) {
@@ -187,6 +199,250 @@ const CenterReticle: React.FC = () => {
 
         <circle cx="29" cy="29" r="2.2" fill="#f8fafc" stroke="#000" strokeWidth="1.25" />
       </svg>
+    </div>
+  );
+};
+
+const BombSightOverlay: React.FC<{
+  pilot: Pilot;
+  sight: BombSightInfo | null | undefined;
+}> = ({ pilot, sight }) => {
+  const bombs = pilot.ammo[WeaponType.BOMB] ?? 0;
+  const ticks = Array.from({ length: 36 }, (_, index) => index * 10);
+
+  return (
+    <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden font-mono bg-[radial-gradient(circle_at_center,transparent_0%,transparent_48%,rgba(0,0,0,0.2)_66%,rgba(0,0,0,0.72)_100%)]">
+      <svg
+        className="absolute inset-0 h-full w-full opacity-90"
+        viewBox="0 0 1000 1000"
+        preserveAspectRatio="xMidYMid meet"
+        aria-hidden="true"
+      >
+        <defs>
+          <filter id="bombsight-glow">
+            <feGaussianBlur stdDeviation="2.5" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        <g
+          fill="none"
+          stroke="#86efac"
+          strokeOpacity="0.68"
+          filter="url(#bombsight-glow)"
+        >
+          <circle cx="500" cy="500" r="310" strokeWidth="2" />
+          <circle cx="500" cy="500" r="218" strokeWidth="1.5" strokeDasharray="7 12" />
+          <circle cx="500" cy="500" r="86" strokeWidth="2" />
+          <line x1="120" y1="500" x2="420" y2="500" strokeWidth="2" />
+          <line x1="580" y1="500" x2="880" y2="500" strokeWidth="2" />
+          <line x1="500" y1="120" x2="500" y2="420" strokeWidth="2" />
+          <line x1="500" y1="580" x2="500" y2="880" strokeWidth="2" />
+          <path d="M440 500H560M500 440V560" strokeWidth="3" />
+          <path d="M452 365L500 340L548 365M452 635L500 660L548 635" strokeWidth="2" />
+
+          {ticks.map(angle => (
+            <line
+              key={angle}
+              x1="500"
+              y1={angle % 30 === 0 ? "166" : "178"}
+              x2="500"
+              y2="194"
+              strokeWidth={angle % 30 === 0 ? "3" : "1.5"}
+              transform={`rotate(${angle} 500 500)`}
+            />
+          ))}
+        </g>
+
+        <g fill="#86efac" fillOpacity="0.72" fontFamily="monospace" fontSize="18">
+          <text x="500" y="145" textAnchor="middle">000</text>
+          <text x="850" y="507" textAnchor="middle">090</text>
+          <text x="500" y="872" textAnchor="middle">180</text>
+          <text x="150" y="507" textAnchor="middle">270</text>
+        </g>
+      </svg>
+
+      {sight?.valid ? (
+        <div
+          className="absolute -translate-x-1/2 -translate-y-1/2"
+          style={{ left: `${sight.x}%`, top: `${sight.y}%` }}
+        >
+          <div className="w-16 h-16 rounded-full border-2 border-amber-300 shadow-[0_0_12px_rgba(252,211,77,0.55)]">
+            <div className="absolute left-1/2 -top-3 h-5 w-px bg-amber-300" />
+            <div className="absolute left-1/2 -bottom-3 h-5 w-px bg-amber-300" />
+            <div className="absolute top-1/2 -left-3 w-5 h-px bg-amber-300" />
+            <div className="absolute top-1/2 -right-3 w-5 h-px bg-amber-300" />
+          </div>
+          <span className="absolute left-1/2 top-[72px] -translate-x-1/2 whitespace-nowrap text-[9px] font-black text-amber-300">
+            IMPACT {sight.timeToImpact.toFixed(1)}S
+          </span>
+        </div>
+      ) : null}
+
+      <div className="absolute left-1/2 bottom-7 -translate-x-1/2 rounded border border-emerald-400/40 bg-black/65 px-5 py-2 text-center">
+        <div className="text-[8px] tracking-[0.24em] text-emerald-300">GYRO-STABILIZED BOMB SIGHT</div>
+        <div className="mt-1 text-[10px] font-black text-white">
+          R RELEASE · V EXIT · BOMBS {bombs}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const TacticalMapOverlay: React.FC<{
+  mapId: string;
+  pilots: Pilot[];
+  groundTargets: GroundTarget[];
+  zones: SkyZone[];
+  campaignState?: CampaignMissionState | null;
+  matchMode: MatchMode;
+  onClose: () => void;
+}> = ({
+  mapId,
+  pilots,
+  groundTargets,
+  zones,
+  campaignState,
+  matchMode,
+  onClose
+}) => {
+  const radius = MAP_REGISTRY[mapId]?.world.radius ?? 6000;
+  const project = (x: number, z: number) => ({
+    x: 400 + (x / radius) * 350,
+    y: 400 - (z / radius) * 350
+  });
+
+  return (
+    <div className="absolute inset-0 z-[80] pointer-events-auto bg-slate-950/82 backdrop-blur-md flex items-center justify-center p-5 font-mono">
+      <div className="relative w-full max-w-6xl h-[min(820px,88vh)] rounded-2xl border border-emerald-400/25 bg-[#061018]/95 shadow-[0_0_70px_rgba(16,185,129,0.12)] overflow-hidden">
+        <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between border-b border-emerald-400/15 bg-black/30 px-5 py-3">
+          <div>
+            <div className="text-[9px] font-black tracking-[0.25em] text-emerald-300 uppercase">
+              Tactical Operations Map
+            </div>
+            <div className="mt-1 text-[11px] font-bold text-white">
+              {mapId} · {matchMode}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-emerald-400/25 bg-emerald-950/50 px-4 py-2 text-[9px] font-black tracking-widest text-emerald-200 hover:bg-emerald-900/60 cursor-pointer"
+          >
+            CLOSE [M]
+          </button>
+        </div>
+
+        <div className="grid h-full grid-cols-1 lg:grid-cols-[1fr_290px] pt-16">
+          <div className="relative min-h-0 p-4">
+            <svg className="h-full w-full" viewBox="0 0 800 800" aria-label="Tactical map">
+              <defs>
+                <pattern id="tactical-grid" width="50" height="50" patternUnits="userSpaceOnUse">
+                  <path d="M50 0H0V50" fill="none" stroke="#34d399" strokeOpacity="0.09" strokeWidth="1" />
+                </pattern>
+                <radialGradient id="tactical-sea">
+                  <stop offset="0%" stopColor="#0b2630" />
+                  <stop offset="100%" stopColor="#061118" />
+                </radialGradient>
+              </defs>
+
+              <circle cx="400" cy="400" r="360" fill="url(#tactical-sea)" stroke="#34d399" strokeOpacity="0.45" strokeWidth="3" />
+              <circle cx="400" cy="400" r="360" fill="url(#tactical-grid)" />
+              <circle cx="400" cy="400" r="240" fill="none" stroke="#34d399" strokeOpacity="0.12" />
+              <circle cx="400" cy="400" r="120" fill="none" stroke="#34d399" strokeOpacity="0.12" />
+              <path d="M400 40V760M40 400H760" stroke="#34d399" strokeOpacity="0.12" />
+
+              {zones.map(zone => {
+                const point = project(zone.x, zone.z);
+                const zoneRadius = zone.radius / radius * 350;
+                const color =
+                  zone.owningTeam === 1 ? "#f87171" :
+                  zone.owningTeam === 2 ? "#60a5fa" :
+                  "#94a3b8";
+                return (
+                  <g key={zone.id}>
+                    <circle cx={point.x} cy={point.y} r={zoneRadius} fill={color} fillOpacity="0.08" stroke={color} strokeOpacity="0.55" strokeDasharray="8 8" />
+                    <text x={point.x} y={point.y + 4} textAnchor="middle" fill={color} fontSize="17" fontWeight="900">
+                      {zone.name.match(/[A-Za-z]/)?.[0]?.toUpperCase() ?? "Z"}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {groundTargets.filter(target => !target.isDead).map(target => {
+                const point = project(target.x, target.z);
+                const color = target.team === 1 ? "#f87171" : "#60a5fa";
+                return (
+                  <g key={target.id} transform={`translate(${point.x} ${point.y})`}>
+                    <rect x="-6" y="-6" width="12" height="12" fill={color} fillOpacity="0.25" stroke={color} strokeWidth="2" transform="rotate(45)" />
+                    <text x="10" y="-8" fill={color} fontSize="10" fontWeight="700">
+                      {target.type.toUpperCase()}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {pilots.filter(pilot => pilot.damage.fuselage > 0).map(pilot => {
+                const point = project(pilot.x, pilot.z);
+                const color = pilot.team === 1 ? "#fb7185" : "#38bdf8";
+                return (
+                  <g key={pilot.id} transform={`translate(${point.x} ${point.y}) rotate(${pilot.yaw * 180 / Math.PI})`}>
+                    <path
+                      d="M0 -13L8 10L0 6L-8 10Z"
+                      fill={pilot.id === "player" ? "#facc15" : color}
+                      stroke="#020617"
+                      strokeWidth="2"
+                    />
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+
+          <aside className="border-l border-emerald-400/15 bg-black/20 p-5 text-left">
+            <div className="text-[8px] font-black tracking-[0.2em] text-slate-500 uppercase">
+              Active Objective
+            </div>
+            <div className="mt-2 rounded-xl border border-emerald-400/20 bg-emerald-950/20 p-4">
+              {campaignState ? (
+                <>
+                  <div className="text-[11px] font-black text-white uppercase">{campaignState.name}</div>
+                  <div className="mt-2 text-[9px] leading-relaxed text-emerald-200">{campaignState.objectiveLabel}</div>
+                  <div className="mt-4 h-2 overflow-hidden rounded bg-slate-900">
+                    <div
+                      className="h-full bg-emerald-400"
+                      style={{ width: `${clamp(campaignState.progress / Math.max(1, campaignState.targetCount), 0, 1) * 100}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 text-right text-[10px] font-black text-white">
+                    {campaignState.progress} / {campaignState.targetCount}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-[11px] font-black text-white uppercase">{matchMode}</div>
+                  <div className="mt-2 text-[9px] leading-relaxed text-slate-400">
+                    Capture marked airspace, destroy hostile units, and reach the team score limit.
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="mt-6 text-[8px] font-black tracking-[0.2em] text-slate-500 uppercase">
+              Legend
+            </div>
+            <div className="mt-3 space-y-3 text-[9px] text-slate-300">
+              <div className="flex items-center gap-3"><span className="text-amber-300">▲</span> Your aircraft</div>
+              <div className="flex items-center gap-3"><span className="text-rose-400">▲</span> Red team</div>
+              <div className="flex items-center gap-3"><span className="text-sky-400">▲</span> Blue team</div>
+              <div className="flex items-center gap-3"><span className="text-emerald-300">◇</span> Ground objective</div>
+            </div>
+          </aside>
+        </div>
+      </div>
     </div>
   );
 };
@@ -371,6 +627,8 @@ const THREE_RAD_TO_DEG = 180 / Math.PI;
 
 export const GameHUD: React.FC<HUDProps> = ({
   playerPilot,
+  pilots,
+  groundTargets,
   skyZones,
   killFeed,
   team1Score,
@@ -379,8 +637,12 @@ export const GameHUD: React.FC<HUDProps> = ({
   matchMode,
   onExit,
   cameraMode,
-  onToggleCameraMode,
   hitmarker,
+  bombSightInfo,
+  campaignState,
+  mapId,
+  showTacticalMap,
+  onCloseTacticalMap,
 }) => {
   if (!playerPilot) return null;
 
@@ -405,9 +667,23 @@ export const GameHUD: React.FC<HUDProps> = ({
       className="absolute inset-0 pointer-events-none select-none text-slate-100"
     >
       {cameraMode === "first-person" && <CockpitOverlay pilot={playerPilot} />}
-      <LeadProjector />
-      <CenterReticle />
+      {cameraMode !== "bombsight" && <LeadProjector />}
+      {cameraMode !== "bombsight" && <CenterReticle />}
+      {cameraMode === "bombsight" && (
+        <BombSightOverlay pilot={playerPilot} sight={bombSightInfo} />
+      )}
       {cameraMode === "first-person" && <HorizontalSituationIndicator pilot={playerPilot} zones={skyZones} />}
+      {showTacticalMap && (
+        <TacticalMapOverlay
+          mapId={mapId}
+          pilots={pilots}
+          groundTargets={groundTargets}
+          zones={skyZones}
+          campaignState={campaignState}
+          matchMode={matchMode}
+          onClose={onCloseTacticalMap}
+        />
+      )}
 
       <div
         id="hud-top-bar"
@@ -422,28 +698,14 @@ export const GameHUD: React.FC<HUDProps> = ({
             Exit
           </button>
 
-          <button
-            onClick={onToggleCameraMode}
-            className="bg-black/55 border border-slate-950 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest text-slate-200 hover:text-amber-400"
-            style={textOutline(1)}
-          >
-            {cameraMode === "third-person" ? "3rd Cam" : "1st Cam"}
-          </button>
-
           <div
             id="hud-fps-counter"
             data-level="good"
-            className="hud-fps-counter rounded-lg border border-slate-800/90 bg-black/55 px-2.5 py-1 font-mono text-[8px] font-bold tracking-wide"
+            className="hud-fps-counter px-1 py-1 font-mono text-[8px] font-bold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]"
           >
             -- FPS · -- MS · -- DC
           </div>
 
-          <div
-            id="hud-phys-debug"
-            className="rounded-lg border border-slate-700/80 bg-black/70 px-2.5 py-1.5 font-mono text-[7.5px] leading-[1.55] tracking-wide text-slate-300 whitespace-pre"
-          >
-            {`AoA  --°  SS  --°  M  ---  q  ----Pa\navP --  avQ --  avR --  deg/s\nMx ----  My ----  Mz ----  N·m\nelv --  ail --  rud --  stall --%`}
-          </div>
         </div>
 
         <div className="absolute left-1/2 top-0 -translate-x-1/2 flex flex-col items-center justify-center bg-black/55 border border-slate-950 px-3.5 py-1 rounded-lg backdrop-blur-md min-w-[240px]">
@@ -480,6 +742,14 @@ export const GameHUD: React.FC<HUDProps> = ({
           >
             {matchMode.toUpperCase()}
           </div>
+          {campaignState && (
+            <div
+              className="mt-0.5 text-[7px] text-emerald-300 uppercase tracking-wider font-bold"
+              style={textOutline(1)}
+            >
+              {campaignState.objectiveLabel}: {campaignState.progress}/{campaignState.targetCount}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col items-end gap-1.5">

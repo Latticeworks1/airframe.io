@@ -41,13 +41,18 @@ export class ScreenEffectsPass {
   private readonly uDamage = uniform(0);
   private readonly uOil = uniform(0);
   private readonly uCloud = uniform(0);
+  private readonly uCloudColor = uniform(new THREE.Color());
   private readonly uResolution = uniform(new THREE.Vector2(1, 1));
 
   private damageStrength = 0;
   private oilStrength = 0;
   private cloudStrength = 0;
 
-  constructor(renderer: WebGPURenderer) {
+  constructor(
+    renderer: WebGPURenderer,
+    cloudVeilColor: THREE.ColorRepresentation
+  ) {
+    this.uCloudColor.value.set(cloudVeilColor);
     this.renderTarget = new RenderTarget(1, 1, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
@@ -57,7 +62,14 @@ export class ScreenEffectsPass {
     this.renderTarget.texture.name = "world-screen-effects-source";
 
     const rt = this.renderTarget;
-    const { uTime, uDamage, uOil, uCloud, uResolution } = this;
+    const {
+      uTime,
+      uDamage,
+      uOil,
+      uCloud,
+      uCloudColor,
+      uResolution
+    } = this;
 
     const fragmentNode = Fn(() => {
       const uvCoord = screenUV.toVar("uv");
@@ -105,9 +117,9 @@ export class ScreenEffectsPass {
       const cloudNoise = noiseFn(
         uvCoord.mul(vec2(5.0, 8.0)).add(vec2(uTime.mul(0.035), uTime.mul(-0.018)))
       ).toVar("cloudNoise");
-      const cloudVeil = uCloud.mul(float(0.62).add(cloudNoise.mul(0.38)));
-      color.assign(mix(color, vec3(0.82, 0.87, 0.9), cloudVeil.mul(0.82)));
-      color.addAssign(cloudNoise.mul(uCloud).mul(0.035));
+      const cloudVeil = uCloud.mul(float(0.58).add(cloudNoise.mul(0.42)));
+      color.assign(mix(color, uCloudColor, cloudVeil.mul(0.52)));
+      color.addAssign(cloudNoise.mul(uCloud).mul(0.018));
 
       return vec4(color, 1.0);
     })();
@@ -159,7 +171,16 @@ export class ScreenEffectsPass {
     const oilBlend = 1 - Math.exp(-frameDt * (oilActive ? 2.4 : 4.5));
     this.oilStrength = THREE.MathUtils.lerp(this.oilStrength, oilTarget, oilBlend);
 
-    const cloudTarget = THREE.MathUtils.clamp(cloudDensity, 0, 1);
+    // The cloud field already renders opaque nearby puffs. This pass should add
+    // moisture and reduced contrast, not replace the whole frame with white.
+    const cloudTarget = Math.min(
+      0.72,
+      THREE.MathUtils.smoothstep(
+        THREE.MathUtils.clamp(cloudDensity, 0, 1),
+        0.12,
+        0.9
+      )
+    );
     const cloudBlend = 1 - Math.exp(-frameDt * (cloudTarget > this.cloudStrength ? 4.8 : 2.6));
     this.cloudStrength = THREE.MathUtils.lerp(this.cloudStrength, cloudTarget, cloudBlend);
 

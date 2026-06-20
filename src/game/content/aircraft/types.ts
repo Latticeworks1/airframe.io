@@ -28,6 +28,8 @@ export interface AeroSpecs {
 
 export interface HardpointSpecs {
   positions: { x: number; y: number; z: number }[];
+  rocketPositions?: { x: number; y: number; z: number }[];
+  bombPositions?: { x: number; y: number; z: number }[];
 }
 
 export interface DamageZoneSpecs {

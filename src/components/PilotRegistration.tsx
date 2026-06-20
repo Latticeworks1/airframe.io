@@ -50,7 +50,7 @@ export const PilotRegistration: React.FC<PilotRegistrationProps> = ({
       setErrorMsg("Callsign must be 15 characters or less.");
       return false;
     }
-    const slugRegex = /^[a-zA-Z0-9_\-]+$/;
+    const slugRegex = /^[a-zA-Z0-9_-]+$/;
     if (!slugRegex.test(name)) {
       setErrorMsg("Only letters, numbers, hyphens or underscores allowed.");
       return false;

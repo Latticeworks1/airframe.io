@@ -5,29 +5,39 @@
 
 import * as THREE from "three";
 import { WebGPURenderer } from "three/webgpu";
-import { Pilot, Projectile, GroundTarget, GameMap, MapSpecs, SkyZone, LeadIndicatorInfo, InputFrame } from "../types";
-import { getDeterministicIslands } from "./terrainModel";
+import {
+  Pilot,
+  Projectile,
+  GroundTarget,
+  SkyZone,
+  LeadIndicatorInfo,
+  InputFrame,
+  CameraMode,
+  BombSightInfo,
+  WeaponType
+} from "../types";
+import { getTerrainLayout, getTerrainHeight, loadHeightmap, sampleHeightmapAt } from "./terrainModel";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { AIRCRAFT_DEFINITIONS } from "./content/aircraft/registry";
 import { createAircraftMesh } from "./content/aircraft/aircraftBuilder";
 import { LOCAL_FORWARD } from "./math";
-import { createSkyDome, SkyDomeMesh, updateSkyDome } from "./skyDome";
+import {
+  createSkyDome,
+  getSkyEnvironment,
+  SkyEnvironment,
+  SkyDomeMesh,
+  updateSkyDome
+} from "./skyDome";
 import { ScreenEffectsPass } from "./screenEffects";
 import { CloudField } from "./cloudField";
+import { getProjectileReleaseState } from "./projectileSystem";
+import { MapDefinition } from "./content/maps/mapTypes";
+import type { BakedMapGeometry } from "./content/maps/mapTypes";
+import { renderMapGeometry, renderPaletteFallback } from "./mapGeometryRenderer";
+import { ScatterRenderer } from "./scatterRenderer";
 
-function latLonToTile(lat: number, lon: number, zoom: number): { x: number; y: number } {
-  const n = Math.pow(2, zoom);
-  const x = Math.floor((lon + 180) / 360 * n);
-  const latRad = lat * Math.PI / 180;
-  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
-  return { x, y };
-}
 
-const MAP_TILE_CONFIG: Partial<Record<GameMap, { lat: number; lon: number; zoom: number }>> = {
-  [GameMap.IslandChain]:  { lat: 21.47, lon: -157.98, zoom: 12 },
-  [GameMap.DesertCanyon]: { lat: 36.06, lon: -112.14, zoom: 12 },
-  [GameMap.AlpineValley]: { lat: 46.49, lon:    8.09, zoom: 12 },
-  [GameMap.StormFront]:   { lat: 51.09, lon:    2.53, zoom: 12 },
-};
+
 
 /**
  * Handles all 3D scene elements, camera dynamics, blocky geometry generation, and particle updates.
@@ -43,16 +53,21 @@ export class WorldRenderer {
   private islands: THREE.Mesh[] = [];
   private carriers: THREE.Group[] = [];
   private groundTargetMeshes = new Map<string, THREE.Group>();
-  private listProjectiles: { bulletId: string; mesh: THREE.Mesh }[] = [];
+  private listProjectiles: {
+    bulletId: string;
+    mesh: THREE.Object3D;
+    type: Projectile["type"];
+    age: number;
+  }[] = [];
   private zoneAnchors: THREE.Group[] = [];
 
   private smokeParticles: { mesh: THREE.Mesh; scaleSpeed: number; vel: THREE.Vector3; life: number }[] = [];
   private explosionBlobs: { mesh: THREE.Mesh; shrinkSpeed: number; vel: THREE.Vector3; life: number }[] = [];
 
-  public mapRadius = 8000;
-  private mapSpecs!: MapSpecs;
-  public cameraMode: "third-person" | "first-person" = "third-person";
+  private mapDef!: MapDefinition;
+  public cameraMode: CameraMode = "third-person";
   public leadIndicator2D: LeadIndicatorInfo | null = null;
+  public bombSightInfo: BombSightInfo | null = null;
 
   private targetCameraOffset = new THREE.Vector3(0, 5.5, 17);
   private cameraLookAtTarget = new THREE.Vector3();
@@ -61,18 +76,27 @@ export class WorldRenderer {
   private cameraModeTransitionPending = true;
   private cameraShakeTime = 0;
   private groundMaterial: THREE.MeshLambertMaterial | null = null;
+  private heightmapGeo: THREE.PlaneGeometry | null = null;
+  private scatterRenderer: ScatterRenderer | null = null;
+  private loadedTiles = new Map<string, THREE.Object3D>();
+  private pendingTiles = new Set<string>();
   private skyDome: SkyDomeMesh | null = null;
+  private sunLight: THREE.DirectionalLight | null = null;
+  private skyLight: THREE.HemisphereLight | null = null;
+  private skyEnvironment: SkyEnvironment | null = null;
+  private lightningDelay = 0;
+  private lightningPhase = 0;
   private screenEffects: ScreenEffectsPass | null = null;
   private rendererReady = false;
   private lastPlayerDamageTotal: number | null = null;
 
-  constructor(container: HTMLDivElement, mapSpecs: MapSpecs, onReady: () => void) {
+  constructor(container: HTMLDivElement, mapDef: MapDefinition, onReady: () => void) {
     this.container = container;
-    this.mapSpecs = mapSpecs;
+    this.mapDef = mapDef;
     this.init().then(() => onReady());
   }
 
-  public setCameraMode(mode: "third-person" | "first-person") {
+  public setCameraMode(mode: CameraMode) {
     if (this.cameraMode === mode) return;
 
     this.cameraMode = mode;
@@ -94,8 +118,14 @@ export class WorldRenderer {
     const height = this.container.clientHeight || 600;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(this.mapSpecs.skyColor);
-    this.scene.fog = new THREE.Fog(this.mapSpecs.fogColor, 3500, 12500);
+    const skyEnvironment = getSkyEnvironment(this.mapDef.atmosphere);
+    this.skyEnvironment = skyEnvironment;
+    this.scene.background = skyEnvironment.backgroundColor.clone();
+    this.scene.fog = new THREE.Fog(
+      skyEnvironment.fogColor,
+      skyEnvironment.fogNear,
+      skyEnvironment.fogFar
+    );
 
     this.camera = new THREE.PerspectiveCamera(65, width / height, 1, 15000);
     this.camera.position.set(0, 200, 300);
@@ -111,23 +141,40 @@ export class WorldRenderer {
     this.renderer.setSize(width, height);
     this.renderer.autoClear = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.5;
+    this.renderer.toneMappingExposure = skyEnvironment.exposure;
     this.renderer.domElement.style.imageRendering = "pixelated";
     this.container.appendChild(this.renderer.domElement);
-    this.screenEffects = new ScreenEffectsPass(this.renderer);
+    this.screenEffects = new ScreenEffectsPass(
+      this.renderer,
+      skyEnvironment.cloudVeilColor
+    );
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
-    this.scene.add(ambientLight);
+    this.skyLight = new THREE.HemisphereLight(
+      skyEnvironment.skyLightColor,
+      skyEnvironment.groundLightColor,
+      skyEnvironment.ambientIntensity
+    );
+    this.scene.add(this.skyLight);
 
-    const dirLight = new THREE.DirectionalLight(0xfffaed, 1.0);
-    dirLight.position.set(2000, 4000, 1000);
-    this.scene.add(dirLight);
+    this.sunLight = new THREE.DirectionalLight(
+      skyEnvironment.sunColor,
+      skyEnvironment.sunIntensity
+    );
+    this.sunLight.position
+      .copy(skyEnvironment.sunDirection)
+      .multiplyScalar(7000);
+    this.scene.add(this.sunLight);
+    this.lightningDelay = THREE.MathUtils.lerp(
+      skyEnvironment.profile.lightning.minDelay,
+      skyEnvironment.profile.lightning.maxDelay,
+      Math.random()
+    );
 
-    this.skyDome = createSkyDome(this.mapSpecs);
+    this.skyDome = createSkyDome(this.mapDef.atmosphere);
     this.scene.add(this.skyDome);
 
-    this.buildTerrain();
-    this.cloudField = new CloudField(this.mapSpecs);
+    await this.buildTerrain();
+    this.cloudField = new CloudField(this.mapDef);
     this.scene.add(this.cloudField.mesh);
     this.loadMapTiles();
 
@@ -157,8 +204,29 @@ export class WorldRenderer {
       this.skyDome = null;
     }
 
+    if (this.sunLight) {
+      this.scene.remove(this.sunLight);
+      this.sunLight.dispose();
+      this.sunLight = null;
+    }
+
+    if (this.skyLight) {
+      this.scene.remove(this.skyLight);
+      this.skyLight.dispose();
+      this.skyLight = null;
+    }
+
     this.screenEffects?.dispose();
     this.screenEffects = null;
+
+    if (this.scatterRenderer) {
+      this.scatterRenderer.dispose();
+      this.scatterRenderer = null;
+    }
+
+    for (const obj of this.loadedTiles.values()) this.scene.remove(obj);
+    this.loadedTiles.clear();
+    this.pendingTiles.clear();
 
     if (this.cloudField) {
       this.scene.remove(this.cloudField.mesh);
@@ -184,228 +252,202 @@ export class WorldRenderer {
     });
   }
 
-  private buildTerrain() {
-    const canvas = document.createElement("canvas");
-    canvas.width = 512;
-    canvas.height = 512;
-    const ctx = canvas.getContext("2d");
+  private async buildTerrain() {
+    const def    = this.mapDef.terrain;
+    const world  = this.mapDef.world;
+    const layout = getTerrainLayout(this.mapDef);
 
-    // Dynamic procedural textures based on theater map ID
-    let landColors: string[] = [];
-    let baseColor = "#271206"; // default dark moist soil base
-    let roadColor = "rgba(226, 232, 240, 0.22)"; // Faint gravel country lanes
-
-    if (this.mapSpecs.id === GameMap.DesertCanyon) {
-      // Sandstone canyon fields & arid dunes
-      baseColor = "#78350f";
-      landColors = [
-        "#b45309", // Warm amber
-        "#d97706", // Burned orange
-        "#f59e0b", // Warm clay
-        "#ca8a04", // Sandstone base
-        "#eab308", // Golden sand
-        "#facc15", // Sun-bleached dust
-        "#a16207", // Ochre hills
-        "#854d0e"  // Raw sienna
-      ];
-      roadColor = "rgba(254, 215, 170, 0.28)"; // Arid dust trails
-    } else if (this.mapSpecs.id === GameMap.AlpineValley) {
-      // Snowy slopes and high-elevation slate ridges
-      baseColor = "#1e293b";
-      landColors = [
-        "#f8fafc", // Fresh powder
-        "#f1f5f9", // Crisp snow
-        "#e2e8f0", // Ice drifts
-        "#cbd5e1", // Glacial ice
-        "#94a3b8", // Moraine gravels
-        "#64748b", // Granite slabs
-        "#475569", // Cold schist
-        "#0f172a"  // Taiga forest clumps
-      ];
-      roadColor = "rgba(100, 116, 139, 0.3)"; // Gravel ridges
-    } else {
-      // Grass fields, woodlands, and crops for Island Chain / Storm Front
-      baseColor = "#14532d";
-      landColors = [
-        "#1b5e20", // Deep forest canopy
-        "#14532d", // Dense thicket
-        "#2e7d32", // Pasture valley
-        "#15803d", // Lush grass
-        "#22c55e", // Active crops
-        "#4caf50", // Harvest lawns
-        "#4ade80", // Young growth
-        "#854d0e", // Clay soil tracks
-        "#a16207", // Dry tilled banks
-        "#ca8a04"  // Mustard crop lines
-      ];
-      roadColor = "rgba(241, 245, 249, 0.25)"; // Country roads
-    }
-
-    if (ctx) {
-      ctx.fillStyle = baseColor;
-      ctx.fillRect(0, 0, 512, 512);
-
-      const cols = 20;
-      const rows = 20;
-      const size = 512 / cols;
-
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          const color = landColors[Math.floor(Math.random() * landColors.length)];
-          ctx.fillStyle = color;
-          ctx.fillRect(c * size + 0.5, r * size + 0.5, size - 1, size - 1);
-
-          // Render alignment lines simulating agricultural plow furrows
-          if (Math.random() < 0.5) {
-            ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            const horizontalPlow = Math.random() < 0.5;
-            for (let offset = 4; offset < size; offset += 4) {
-              if (horizontalPlow) {
-                ctx.moveTo(c * size + 1, r * size + offset);
-                ctx.lineTo(c * size + size - 1, r * size + offset);
-              } else {
-                ctx.moveTo(c * size + offset, r * size + 1);
-                ctx.lineTo(c * size + offset, r * size + size - 1);
-              }
-            }
-            ctx.stroke();
-          }
-        }
-      }
-
-      // Weave country roads across the agricultural land
-      ctx.strokeStyle = roadColor;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      for (let index = 0; index < 4; index++) {
-        const yCoord = Math.random() * 512;
-        ctx.moveTo(0, yCoord);
-        ctx.bezierCurveTo(128, yCoord + (Math.random() - 0.5) * 120, 384, yCoord + (Math.random() - 0.5) * 120, 512, yCoord);
-      }
-      for (let index = 0; index < 4; index++) {
-        const xCoord = Math.random() * 512;
-        ctx.moveTo(xCoord, 0);
-        ctx.bezierCurveTo(xCoord + (Math.random() - 0.5) * 120, 128, xCoord + (Math.random() - 0.5) * 120, 384, xCoord, 512);
-      }
-      ctx.stroke();
-    }
-
-    const groundTex = new THREE.CanvasTexture(canvas);
-    groundTex.wrapS = THREE.RepeatWrapping;
-    groundTex.wrapT = THREE.RepeatWrapping;
-    groundTex.repeat.set(120, 120); // Scale the tile pattern across the 30km terrain
-
-    const landGeo = new THREE.BoxGeometry(30000, 12, 30000);
-    const landMat = new THREE.MeshLambertMaterial({
-      map: groundTex,
-      flatShading: true
-    });
+    const landMat = new THREE.MeshLambertMaterial({ flatShading: true });
     this.groundMaterial = landMat;
-    const landPlane = new THREE.Mesh(landGeo, landMat);
-    landPlane.position.y = -8;
-    this.scene.add(landPlane);
 
-    const deterministicIslands = getDeterministicIslands(this.mapSpecs.id);
+    if (def.kind === "heightmap") {
+      // Subdivided plane displaced by heightmap — load async then displace verts
+      const segs = window.devicePixelRatio >= 2 ? 128 : 256; // fewer segs on mobile
+      const planeGeo = new THREE.PlaneGeometry(world.radius * 2, world.radius * 2, segs, segs);
+      planeGeo.rotateX(-Math.PI / 2);
+      this.heightmapGeo = planeGeo;
+      const planeMesh = new THREE.Mesh(planeGeo, landMat);
+      this.scene.add(planeMesh);
 
-    deterministicIslands.forEach((isl) => {
-      if (isl.isAirfield) {
-        const stripGeo = new THREE.BoxGeometry(55, 12, 650);
-        const strip = new THREE.Mesh(stripGeo, this.mat(0x334155));
-        strip.position.set(isl.x, 4, isl.z);
-        this.scene.add(strip);
+      try {
+        const hd = await loadHeightmap(def.path, world.radius, def.elevationScale);
+        const pos = planeGeo.attributes.position as THREE.BufferAttribute;
+        for (let i = 0; i < pos.count; i++) {
+          const x = pos.getX(i), z = pos.getZ(i);
+          pos.setY(i, sampleHeightmapAt(hd, x, z));
+        }
+        pos.needsUpdate = true;
+        planeGeo.computeVertexNormals();
+      } catch (e) {
+        console.error("Failed to load heightmap:", e);
       }
-    });
 
-    if (this.mapSpecs.hasCarriers) {
-      for (const team of [1, 2] as const) {
-        const carrier = new THREE.Group();
+    } else if (def.kind === "glb") {
+      const loader = new GLTFLoader();
+      loader.load(def.path, gltf => {
+        this.scene.add(gltf.scene);
+        this.islands.push(...(gltf.scene.children as THREE.Mesh[]));
+      });
 
-        const hull = new THREE.Mesh(
-          new THREE.BoxGeometry(80, 26, 400),
-          this.mat(0x475569)
+    } else if (def.kind === "tiled-glb") {
+      // Tile manager: first tick of updateTiles populates initial tiles
+      // Nothing needed at build time — updateTiles handles loading
+
+    } else {
+      // Procedural terrain blocks (islands, canyons, alpine, storm-islands)
+      const groundSize = world.radius * 2;
+      const landGeo = new THREE.BoxGeometry(groundSize, 12, groundSize);
+      const landMesh = new THREE.Mesh(landGeo, landMat);
+      landMesh.position.y = -8;
+      this.scene.add(landMesh);
+
+      for (const block of layout.blocks) {
+        const color = block.material === "snow"    ? 0xf0f4f8
+                    : block.material === "rock"    ? 0x64748b
+                    : block.material === "clay"    ? 0xc2410c
+                    : block.material === "rockDark"? 0x334155
+                    : block.material === "landDark"? 0x166534
+                    :                               0x15803d;
+
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(...block.scale),
+          this.mat(color)
         );
-        hull.position.y = 8;
-        carrier.add(hull);
-
-        const deck = new THREE.Mesh(
-          new THREE.BoxGeometry(74, 4, 390),
-          this.mat(0x1e293b)
-        );
-        deck.position.y = 23;
-        carrier.add(deck);
-
-        const tower = new THREE.Mesh(
-          new THREE.BoxGeometry(18, 46, 42),
-          this.mat(0x334155)
-        );
-        tower.position.set(31, 48, -38);
-        carrier.add(tower);
-
-        const runwayLine = new THREE.Mesh(
-          new THREE.BoxGeometry(4, 1, 320),
-          this.mat(0xf8fafc, true)
-        );
-        runwayLine.position.y = 26;
-        carrier.add(runwayLine);
-
-        const cx = team === 1 ? -4000 : 4000;
-        const cz = team === 1 ? -3000 : 3000;
-        carrier.position.set(cx, 0, cz);
-        carrier.rotation.y = team === 1 ? Math.PI / 4 : -3 * Math.PI / 4;
-
-        this.scene.add(carrier);
-        this.carriers.push(carrier);
+        mesh.position.set(...block.position);
+        mesh.rotation.y = block.rotationY;
+        this.scene.add(mesh);
+        this.islands.push(mesh);
       }
+    }
+
+    // Airfield strips (all procedural terrain kinds)
+    for (const feature of layout.features) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(55, 12, 650), this.mat(0x334155));
+      strip.position.set(feature.position[0], 4, feature.position[2]);
+      this.scene.add(strip);
+    }
+
+    // Carrier models
+    for (const cd of this.mapDef.layout.carriers) {
+      const carrier = new THREE.Group();
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(80, 26, 400), this.mat(0x475569));
+      hull.position.y = 8;
+      carrier.add(hull);
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(74, 4, 390), this.mat(0x1e293b));
+      deck.position.y = 23;
+      carrier.add(deck);
+      const tower = new THREE.Mesh(new THREE.BoxGeometry(18, 46, 42), this.mat(0x334155));
+      tower.position.set(31, 48, -38);
+      carrier.add(tower);
+      const runway = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 320), this.mat(0xf8fafc, true));
+      runway.position.y = 26;
+      carrier.add(runway);
+      carrier.position.set(cd.x, 0, cd.z);
+      carrier.rotation.y = cd.rotationY;
+      this.scene.add(carrier);
+      this.carriers.push(carrier);
+    }
+
+    // Scatter pass — deferred so geom fetch can complete first via loadMapTiles
+    // ScatterRenderer is initialized after geometry arrives (see loadMapTiles)
+  }
+
+  private initScatter(geom?: BakedMapGeometry) {
+    if (this.scatterRenderer) return;
+    const layout = getTerrainLayout(this.mapDef);
+    this.scatterRenderer = new ScatterRenderer(this.scene, this.mapDef, layout, geom);
+  }
+
+  private updateTiles(playerX: number, playerZ: number) {
+    const def = this.mapDef.terrain;
+    if (def.kind !== "tiled-glb") return;
+
+    const { tileDir, tileSize, tileGrid, loadRadius } = def;
+    const half   = Math.floor(tileGrid / 2);
+    const loader = new GLTFLoader();
+
+    const needed = new Set<string>();
+    for (let row = 0; row < tileGrid; row++) {
+      for (let col = 0; col < tileGrid; col++) {
+        const tx = (col - half) * tileSize;
+        const tz = (row - half) * tileSize;
+        const dx = tx - playerX, dz = tz - playerZ;
+        if (Math.sqrt(dx * dx + dz * dz) > loadRadius) continue;
+        needed.add(`${row}_${col}`);
+      }
+    }
+
+    // Dispose out-of-range tiles
+    for (const [key, obj] of this.loadedTiles) {
+      if (!needed.has(key)) {
+        this.scene.remove(obj);
+        this.loadedTiles.delete(key);
+      }
+    }
+
+    // Load new tiles
+    for (const key of needed) {
+      if (this.loadedTiles.has(key) || this.pendingTiles.has(key)) continue;
+      const [row, col] = key.split("_").map(Number);
+      const tx = (col - half) * tileSize;
+      const tz = (row - half) * tileSize;
+      this.pendingTiles.add(key);
+      loader.load(`${tileDir}/${key}.glb`, gltf => {
+        gltf.scene.position.set(tx, 0, tz);
+        this.scene.add(gltf.scene);
+        this.loadedTiles.set(key, gltf.scene);
+        this.pendingTiles.delete(key);
+      }, undefined, () => { this.pendingTiles.delete(key); });
     }
   }
 
-  private async loadMapTiles() {
-    const config = MAP_TILE_CONFIG[this.mapSpecs.id];
-    if (!config || !this.groundMaterial) return;
+  private loadMapTiles() {
+    if (!this.groundMaterial) return;
 
-    const { lat, lon, zoom } = config;
-    const GRID = 4;
-    const center = latLonToTile(lat, lon, zoom);
-    const half = Math.floor(GRID / 2);
-
-    const TILE_PX = 256;
-    const canvas = document.createElement("canvas");
-    canvas.width = TILE_PX * GRID;
-    canvas.height = TILE_PX * GRID;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const loads: Promise<void>[] = [];
-    for (let row = 0; row < GRID; row++) {
-      for (let col = 0; col < GRID; col++) {
-        const tx = center.x - half + col;
-        const ty = center.y - half + row;
-        loads.push(
-          new Promise<void>(resolve => {
-            const img = new Image();
-            img.crossOrigin = "anonymous";
-            img.onload = () => {
-              ctx.drawImage(img, col * TILE_PX, row * TILE_PX, TILE_PX, TILE_PX);
-              resolve();
-            };
-            img.onerror = () => resolve();
-            img.src = `https://tile.openstreetmap.org/${zoom}/${tx}/${ty}.png`;
-          })
-        );
-      }
-    }
-
-    await Promise.all(loads);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = THREE.ClampToEdgeWrapping;
-    tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.needsUpdate = true;
-
-    this.groundMaterial.map = tex;
+    // Apply a fast palette-based texture immediately so the ground is never black
+    const fallback = renderPaletteFallback(this.mapDef.palette);
+    this.groundMaterial.map = fallback;
     this.groundMaterial.needsUpdate = true;
+
+    // First try to load pre-baked satellite imagery
+    const textureLoader = new THREE.TextureLoader();
+    textureLoader.load(
+      `/maps/${this.mapDef.id}.satellite.png`,
+      (satTex) => {
+        if (!this.groundMaterial) return;
+        satTex.wrapS = THREE.ClampToEdgeWrapping;
+        satTex.wrapT = THREE.ClampToEdgeWrapping;
+        satTex.colorSpace = THREE.SRGBColorSpace;
+        this.groundMaterial.map = satTex;
+        this.groundMaterial.needsUpdate = true;
+        fallback.dispose();
+
+        // Load geometry JSON in background just to seed scatter objects on their real positions
+        fetch(`/maps/${this.mapDef.id}.geom.json`)
+          .then(r => r.ok ? r.json() as Promise<BakedMapGeometry> : Promise.reject(r.status))
+          .then(geom => this.initScatter(geom))
+          .catch(() => this.initScatter());
+      },
+      undefined,
+      () => {
+        // Fallback to OSM geom overlay canvas if satellite is not available
+        fetch(`/maps/${this.mapDef.id}.geom.json`)
+          .then(r => r.ok ? r.json() as Promise<BakedMapGeometry> : Promise.reject(r.status))
+          .then(geom => {
+            if (!this.groundMaterial) return;
+            const tex = renderMapGeometry(geom, this.mapDef.palette);
+            tex.wrapS = THREE.ClampToEdgeWrapping;
+            tex.wrapT = THREE.ClampToEdgeWrapping;
+            this.groundMaterial.map = tex;
+            this.groundMaterial.needsUpdate = true;
+            fallback.dispose();
+            this.initScatter(geom);
+          })
+          .catch(() => {
+            this.initScatter();
+          });
+      }
+    );
   }
 
   private generateProceduralAircraft(
@@ -550,6 +592,15 @@ export class WorldRenderer {
           child.rotation.z += (15 + p.throttle * 40) * dt;
         }
 
+        const bombTag = (child.userData.tags as string[] | undefined)?.find(
+          tag => tag.startsWith("ordnance:bomb:")
+        );
+        if (bombTag) {
+          const bombIndex = Number(bombTag.split(":")[2]);
+          const bombsRemaining = p.ammo[WeaponType.BOMB] ?? 0;
+          child.visible = Number.isFinite(bombIndex) && bombIndex < bombsRemaining;
+        }
+
         // Apply visual component damage reduction
         const component = child.userData.damageComponent as any;
         if (component && (p.damage as any)[component] !== undefined) {
@@ -596,14 +647,15 @@ export class WorldRenderer {
       }
     }
 
-    this.syncProjectiles(projectiles, playerPilotId);
+    this.syncProjectiles(projectiles, playerPilotId, dt);
     this.updateParticles(dt);
     this.updateCamera(pilots, playerPilotId, inputFrame, dt);
 
+    const playerPilot = pilots.find(p => p.id === playerPilotId);
+    if (playerPilot) this.updateTiles(playerPilot.x, playerPilot.z);
     this.cloudField?.update(dt);
 
     // Project Lead Indicator for Targeting HUD Overlay
-    const playerPilot = pilots.find(p => p.id === playerPilotId);
     let lockedAdv: Pilot | null = null;
     let bestDot = 0.94;
     let lockedDist = 0;
@@ -663,8 +715,14 @@ export class WorldRenderer {
     }
 
     if (this.skyDome) {
-      updateSkyDome(this.skyDome, this.camera, dt);
+      updateSkyDome(
+        this.skyDome,
+        this.camera,
+        this.scene.fog instanceof THREE.Fog ? this.scene.fog : null,
+        dt
+      );
     }
+    this.updateAtmosphere(dt);
 
     const playerDamageTotal = playerPilot
       ? playerPilot.damage.engine +
@@ -706,6 +764,63 @@ export class WorldRenderer {
       this.renderer.clear();
       this.renderer.render(this.scene, this.camera);
     }
+  }
+
+  private updateAtmosphere(dt: number) {
+    const environment = this.skyEnvironment;
+    const sunLight = this.sunLight;
+    const skyLight = this.skyLight;
+
+    if (!environment || !sunLight || !skyLight) return;
+
+    const lightning = environment.profile.lightning;
+    if (!lightning.enabled) return;
+
+    if (this.lightningPhase <= 0) {
+      this.lightningDelay -= dt;
+      if (this.lightningDelay <= 0) {
+        this.lightningPhase = 0.34;
+        this.lightningDelay = THREE.MathUtils.lerp(
+          lightning.minDelay,
+          lightning.maxDelay,
+          Math.random()
+        );
+      }
+    } else {
+      this.lightningPhase = Math.max(0, this.lightningPhase - dt);
+    }
+
+    let flash = 0;
+    if (this.lightningPhase > 0.26) flash = 1;
+    else if (this.lightningPhase > 0.18) flash = 0.08;
+    else if (this.lightningPhase > 0.08) flash = 0.72;
+
+    if (flash > 0) {
+      sunLight.color.set(lightning.color);
+      sunLight.intensity = THREE.MathUtils.lerp(
+        environment.sunIntensity,
+        3.2,
+        flash
+      );
+      skyLight.color.set(lightning.color);
+      skyLight.intensity = THREE.MathUtils.lerp(
+        environment.ambientIntensity,
+        1.65,
+        flash
+      );
+      this.renderer.toneMappingExposure = THREE.MathUtils.lerp(
+        environment.exposure,
+        environment.exposure * 1.45,
+        flash
+      );
+      return;
+    }
+
+    sunLight.color.copy(environment.sunColor);
+    sunLight.intensity = environment.sunIntensity;
+    skyLight.color.copy(environment.skyLightColor);
+    skyLight.intensity = environment.ambientIntensity;
+    this.renderer.toneMappingExposure = environment.exposure;
   }
 
   private updateParticles(dt: number) {
@@ -768,9 +883,11 @@ export class WorldRenderer {
     );
     const targetFov = this.cameraMode === "first-person"
       ? THREE.MathUtils.clamp(firstPersonBaseFov + firstPersonSpeedFov, 68, 80)
-      : THREE.MathUtils.clamp(65 + speedKmph / 28, 62, 92);
+      : this.cameraMode === "bombsight"
+        ? 52
+        : THREE.MathUtils.clamp(65 + speedKmph / 28, 62, 92);
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 3);
-    this.camera.near = this.cameraMode === "first-person" ? 0.25 : 1;
+    this.camera.near = this.cameraMode === "third-person" ? 1 : 0.25;
 
     // Handle free look view angles from right/secondary mouse button drag
     const isFreeLookActive = !!(inputFrame && inputFrame.rightMouse);
@@ -786,7 +903,31 @@ export class WorldRenderer {
       this.freeLookPitch += (0 - this.freeLookPitch) * dt * 8.0;
     }
 
-    if (this.cameraMode === "first-person") {
+    if (this.cameraMode === "bombsight") {
+      pGroup.visible = false;
+      this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, false);
+
+      // Rigid belly-camera mount. A Three.js camera looks along local -Z.
+      // This fixed mount maps camera -Z to aircraft -Y (belly) and camera +Y
+      // to aircraft +Z (nose/top of sight). Multiplying it by the aircraft
+      // quaternion guarantees that an inverted aircraft looks into the sky.
+      const mountBasis = new THREE.Matrix4().makeBasis(
+        new THREE.Vector3(-1, 0, 0),
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(0, 1, 0)
+      );
+      const mountQuaternion = new THREE.Quaternion()
+        .setFromRotationMatrix(mountBasis);
+      const cameraPosition = pGroup.position.clone().add(
+        new THREE.Vector3(0, -1.45, 0.65).applyQuaternion(pGroup.quaternion)
+      );
+
+      this.camera.position.copy(cameraPosition);
+      this.camera.quaternion
+        .copy(pGroup.quaternion)
+        .multiply(mountQuaternion)
+        .normalize();
+    } else if (this.cameraMode === "first-person") {
       pGroup.visible = true;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, true);
 
@@ -869,6 +1010,56 @@ export class WorldRenderer {
     }
 
     this.camera.updateProjectionMatrix();
+    this.updateBombSightPrediction(playerPilot);
+  }
+
+  private updateBombSightPrediction(player: Pilot) {
+    if (this.cameraMode !== "bombsight") {
+      this.bombSightInfo = null;
+      return;
+    }
+
+    const release = getProjectileReleaseState(player, WeaponType.BOMB);
+    const position = release.position.clone();
+    const velocity = release.velocity.clone();
+
+    const step = 0.04;
+    let time = 0;
+    let valid = false;
+
+    while (time < 7) {
+      velocity.y -= 9.8 * step;
+      position.addScaledVector(velocity, step);
+      time += step;
+
+      const terrainHeight = getTerrainHeight(
+        position.x,
+        position.z,
+        this.mapDef.id
+      ).height;
+      if (position.y <= Math.max(12, terrainHeight)) {
+        position.y = Math.max(12, terrainHeight);
+        valid = true;
+        break;
+      }
+    }
+
+    const projected = position.clone().project(this.camera);
+    this.bombSightInfo = {
+      x: (projected.x * 0.5 + 0.5) * 100,
+      y: (-projected.y * 0.5 + 0.5) * 100,
+      timeToImpact: time,
+      impactX: position.x,
+      impactZ: position.z,
+      valid:
+        valid &&
+        projected.z >= -1 &&
+        projected.z <= 1 &&
+        projected.x >= -1.25 &&
+        projected.x <= 1.25 &&
+        projected.y >= -1.25 &&
+        projected.y <= 1.25
+    };
   }
 
   private setFirstPersonBlockVisibility(
@@ -1014,7 +1205,11 @@ export class WorldRenderer {
     }
   }
 
-  private syncProjectiles(projectiles: Projectile[], playerPilotId: string) {
+  private syncProjectiles(
+    projectiles: Projectile[],
+    playerPilotId: string,
+    dt: number
+  ) {
     const activeBullets = new Set<string>();
 
     for (const p of projectiles) {
@@ -1023,8 +1218,7 @@ export class WorldRenderer {
       let pEntry = this.listProjectiles.find(e => e.bulletId === p.id);
 
       if (!pEntry) {
-        const size = p.isRocket ? 3.0 : 1.2;
-        const lineGeo = new THREE.BoxGeometry(0.22 * size, 0.22 * size, 14 * size);
+        let projectileObject: THREE.Object3D;
 
         let color: THREE.ColorRepresentation = 0xfffaed;
 
@@ -1037,20 +1231,82 @@ export class WorldRenderer {
           color = 0xffd700;
         }
 
-        const mat = new THREE.MeshBasicMaterial({
-          color,
-          transparent: String(p.belt) === "Stealth",
-          opacity: String(p.belt) === "Stealth" ? 0.08 : 0.95
-        });
+        if (p.type === WeaponType.BOMB) {
+          const bomb = new THREE.Group();
+          bomb.name = "bomb-projectile";
 
-        const mesh = new THREE.Mesh(lineGeo, mat);
-        this.scene.add(mesh);
+          const bodyMaterial = new THREE.MeshLambertMaterial({
+            color: 0x3f3f32,
+            flatShading: true
+          });
+          const bandMaterial = new THREE.MeshBasicMaterial({ color: 0xd6a11d });
+          const finMaterial = new THREE.MeshLambertMaterial({
+            color: 0x25251f,
+            flatShading: true
+          });
 
-        pEntry = { bulletId: p.id, mesh };
+          const body = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.38, 0.38, 1.8, 8),
+            bodyMaterial
+          );
+          body.rotation.x = Math.PI / 2;
+          bomb.add(body);
+
+          const nose = new THREE.Mesh(
+            new THREE.ConeGeometry(0.38, 0.72, 8),
+            bodyMaterial
+          );
+          nose.rotation.x = Math.PI / 2;
+          nose.position.z = 1.22;
+          bomb.add(nose);
+
+          const band = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.41, 0.41, 0.14, 8),
+            bandMaterial
+          );
+          band.rotation.x = Math.PI / 2;
+          band.position.z = 0.35;
+          bomb.add(band);
+
+          for (const rotation of [0, Math.PI / 2]) {
+            const fins = new THREE.Mesh(
+              new THREE.BoxGeometry(1.05, 0.1, 0.62),
+              finMaterial
+            );
+            fins.rotation.z = rotation;
+            fins.position.z = -1.08;
+            bomb.add(fins);
+          }
+
+          projectileObject = bomb;
+        } else {
+          const size = p.isRocket ? 3.0 : 1.2;
+          const lineGeo = new THREE.BoxGeometry(
+            0.22 * size,
+            0.22 * size,
+            14 * size
+          );
+          const mat = new THREE.MeshBasicMaterial({
+            color,
+            transparent: String(p.belt) === "Stealth",
+            opacity: String(p.belt) === "Stealth" ? 0.08 : 0.95
+          });
+          projectileObject = new THREE.Mesh(lineGeo, mat);
+        }
+
+        this.scene.add(projectileObject);
+
+        pEntry = {
+          bulletId: p.id,
+          mesh: projectileObject,
+          type: p.type,
+          age: 0
+        };
         this.listProjectiles.push(pEntry);
       }
 
       pEntry.mesh.position.set(p.x, p.y, p.z);
+      pEntry.age += dt;
 
       const speedVec = new THREE.Vector3(p.vx, p.vy, p.vz);
 
@@ -1064,6 +1320,10 @@ export class WorldRenderer {
 
         pEntry.mesh.quaternion.copy(quat);
       }
+
+      if (pEntry.type === WeaponType.BOMB) {
+        pEntry.mesh.rotateOnAxis(LOCAL_FORWARD, pEntry.age * 4.2);
+      }
     }
 
     for (let i = this.listProjectiles.length - 1; i >= 0; i--) {
@@ -1071,8 +1331,11 @@ export class WorldRenderer {
 
       if (!activeBullets.has(entry.bulletId)) {
         this.scene.remove(entry.mesh);
-        entry.mesh.geometry.dispose();
-        disposeMaterial(entry.mesh.material);
+        entry.mesh.traverse(child => {
+          if (!(child instanceof THREE.Mesh)) return;
+          child.geometry.dispose();
+          disposeMaterial(child.material);
+        });
         this.listProjectiles.splice(i, 1);
       }
     }

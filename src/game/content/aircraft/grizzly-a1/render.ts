@@ -7,7 +7,9 @@ export const render: AircraftRenderDef = {
     secondary: "#DC2626",
     accent: "#FBBF24",
     canopy: "#0EA5E9",
-    metal: "#64748B"
+    metal: "#64748B",
+    bomb: "#3F3F32",
+    bombBand: "#D6A11D"
   },
   camera: {
     cockpitEye: [0, 1.38, 0.95],
@@ -140,6 +142,43 @@ export const render: AircraftRenderDef = {
       position: [5.0, -0.55, 0.3],
       scale: [1.0, 0.65, 2.5],
       material: "secondary"
-    }
+    },
+    ...[
+      [-2.45, -0.95, 1.45],
+      [2.45, -0.95, 1.45],
+      [-2.45, -0.95, -1.15],
+      [2.45, -0.95, -1.15]
+    ].flatMap((position, index) => [
+      {
+        id: `bombBody${index}`,
+        kind: "cylinder" as const,
+        role: "weapon" as const,
+        position: position as [number, number, number],
+        rotation: [Math.PI / 2, 0, 0] as [number, number, number],
+        scale: [0.58, 1.8, 0.58] as [number, number, number],
+        material: "bomb",
+        tags: [`ordnance:bomb:${index}`]
+      },
+      {
+        id: `bombNose${index}`,
+        kind: "wedge" as const,
+        role: "weapon" as const,
+        position: [position[0], position[1], position[2] + 1.02] as [number, number, number],
+        rotation: [Math.PI, 0, 0] as [number, number, number],
+        scale: [0.58, 0.58, 0.55] as [number, number, number],
+        material: "bomb",
+        tags: [`ordnance:bomb:${index}`]
+      },
+      {
+        id: `bombBand${index}`,
+        kind: "cylinder" as const,
+        role: "weapon" as const,
+        position: [position[0], position[1], position[2] + 0.3] as [number, number, number],
+        rotation: [Math.PI / 2, 0, 0] as [number, number, number],
+        scale: [0.64, 0.16, 0.64] as [number, number, number],
+        material: "bombBand",
+        tags: [`ordnance:bomb:${index}`]
+      }
+    ])
   ]
 };

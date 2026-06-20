@@ -1,11 +1,61 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
+import { MapDefinition, ProceduralTerrainDef, isProceduralTerrain } from "./content/maps/mapTypes";
+import { MAP_REGISTRY } from "./content/maps/registry";
 
-import { GameMap } from "../types";
-import { MapDefinition } from "./content/maps/mapTypes";
-import { MAP_DEFINITIONS } from "./content/maps/mapDefinitions";
+// --- Heightmap support ---
+
+export interface HeightmapData {
+  buffer: Float32Array;
+  width: number;
+  height: number;
+  worldRadius: number;
+  elevationScale: number;
+}
+
+const heightmapCache = new Map<string, HeightmapData>();
+
+export async function loadHeightmap(
+  path: string,
+  worldRadius: number,
+  elevationScale: number
+): Promise<HeightmapData> {
+  if (heightmapCache.has(path)) return heightmapCache.get(path)!;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      const px = ctx.getImageData(0, 0, img.width, img.height).data;
+      const buf = new Float32Array(img.width * img.height);
+      for (let i = 0; i < buf.length; i++) buf[i] = px[i * 4] / 255;
+      const data: HeightmapData = { buffer: buf, width: img.width, height: img.height, worldRadius, elevationScale };
+      heightmapCache.set(path, data);
+      resolve(data);
+    };
+    img.onerror = () => reject(new Error(`Failed to load heightmap: ${path}`));
+    img.src = path;
+  });
+}
+
+export function sampleHeightmapAt(data: HeightmapData, x: number, z: number): number {
+  const nx = (x / (data.worldRadius * 2) + 0.5) * (data.width - 1);
+  const nz = (z / (data.worldRadius * 2) + 0.5) * (data.height - 1);
+  const x0 = Math.max(0, Math.floor(nx)), x1 = Math.min(x0 + 1, data.width - 1);
+  const z0 = Math.max(0, Math.floor(nz)), z1 = Math.min(z0 + 1, data.height - 1);
+  const fx = nx - x0, fz = nz - z0;
+  const w = data.width;
+  const h = data.buffer[z0 * w + x0] * (1 - fx) * (1 - fz)
+          + data.buffer[z0 * w + x1] * fx * (1 - fz)
+          + data.buffer[z1 * w + x0] * (1 - fx) * fz
+          + data.buffer[z1 * w + x1] * fx * fz;
+  return h * data.elevationScale;
+}
+
+export function getHeightmapData(path: string): HeightmapData | undefined {
+  return heightmapCache.get(path);
+}
 
 export interface TerrainBlock {
   id: string;
@@ -26,7 +76,7 @@ export interface TerrainFeature {
 }
 
 export interface TerrainLayout {
-  mapId: GameMap;
+  mapId: string;
   seed: number;
   blocks: TerrainBlock[];
   features: TerrainFeature[];
@@ -40,7 +90,7 @@ export interface TerrainSample {
   featureId?: string;
 }
 
-const terrainCache = new Map<GameMap, TerrainLayout>();
+const terrainCache = new Map<string, TerrainLayout>();
 
 export function getTerrainLayout(map: MapDefinition): TerrainLayout {
   const cached = terrainCache.get(map.id);
@@ -51,17 +101,29 @@ export function getTerrainLayout(map: MapDefinition): TerrainLayout {
 }
 
 function generateTerrainLayout(map: MapDefinition): TerrainLayout {
+  if (!isProceduralTerrain(map.terrain)) {
+    return {
+      mapId: map.id,
+      seed: map.seed,
+      blocks: [],
+      features: [],
+      waterHeight: map.world.waterHeight,
+      defaultGroundHeight: map.world.defaultGroundHeight
+    };
+  }
+
   const rand = mulberry32(map.seed);
   const blocks: TerrainBlock[] = [];
   const features: TerrainFeature[] = [];
+  const terrain = map.terrain;
 
-  for (let i = 0; i < map.terrain.blockCount; i++) {
-    const r = lerp(map.terrain.radius.min, map.terrain.radius.max, rand());
+  for (let i = 0; i < terrain.blockCount; i++) {
+    const r = lerp(terrain.radius.min, terrain.radius.max, rand());
     const theta = rand() * Math.PI * 2;
     const scale: [number, number, number] = [
-      randomRange(rand, map.terrain.blockSize.x),
-      randomRange(rand, map.terrain.blockSize.y),
-      randomRange(rand, map.terrain.blockSize.z)
+      randomRange(rand, terrain.blockSize.x),
+      randomRange(rand, terrain.blockSize.y),
+      randomRange(rand, terrain.blockSize.z)
     ];
 
     const block: TerrainBlock = {
@@ -69,24 +131,24 @@ function generateTerrainLayout(map: MapDefinition): TerrainLayout {
       position: [Math.cos(theta) * r, scale[1] / 2 - 10, Math.sin(theta) * r],
       rotationY: rand() * Math.PI,
       scale,
-      material: pickTerrainMaterial(map.terrain.kind, rand),
+      material: pickTerrainMaterial(terrain.kind, rand),
       surface:
-        map.terrain.kind === "alpine"
+        terrain.kind === "alpine"
           ? "mountain"
-          : map.terrain.kind === "canyons"
+          : terrain.kind === "canyons"
           ? "canyon"
           : "land"
     };
     blocks.push(block);
 
-    if (i < map.terrain.airfieldCount) {
+    if (i < terrain.airfieldCount) {
       features.push({
         id: `airfield-${i}`,
         type: "airfield",
         parentBlockId: block.id,
         position: [block.position[0], scale[1] + 4, block.position[2]],
         rotationY: block.rotationY,
-        scale: [120, 12, 900] // Polished runways scaled for takeoff
+        scale: [120, 12, 900]
       });
     }
   }
@@ -166,7 +228,7 @@ function lerp(a: number, b: number, t: number) {
 }
 
 function pickTerrainMaterial(
-  kind: MapDefinition["terrain"]["kind"],
+  kind: ProceduralTerrainDef["kind"],
   rand: () => number
 ): string {
   if (kind === "canyons") return rand() < 0.5 ? "clay" : "rockDark";
@@ -183,39 +245,21 @@ function mulberry32(seed: number) {
   };
 }
 
-// Legacy adapters for zero-breaking changes across existing modules:
-export function getDeterministicIslands(mapId: GameMap): any[] {
-  const mapDef = MAP_DEFINITIONS[mapId];
-  if (!mapDef) return [];
-  const layout = getTerrainLayout(mapDef);
-  return layout.blocks.map(block => {
-    const hasAirfield = layout.features.some(f => f.parentBlockId === block.id);
-    return {
-      x: block.position[0],
-      z: block.position[2],
-      scaleX: block.scale[0],
-      scaleY: block.scale[1],
-      scaleZ: block.scale[2],
-      rotationY: block.rotationY,
-      isAirfield: hasAirfield
-    };
-  });
-}
-
-export function getTerrainHeight(x: number, z: number, mapId: GameMap): { height: number; isAirfield: boolean } {
-  const mapDef = MAP_DEFINITIONS[mapId];
+export function getTerrainHeight(x: number, z: number, mapId: string): { height: number; isAirfield: boolean } {
+  const mapDef = MAP_REGISTRY[mapId];
   if (!mapDef) return { height: 10, isAirfield: false };
 
-  // If map has carrier battle groups, intercept collision to support carrier takeoff & deck landings
-  if (mapDef.layout.hasCarriers) {
-    // Team 1 Carrier deck range (76 width, 395 length, rotated 45deg)
-    if (pointInsideRotatedBox2D(x, z, -4000, -3000, 76, 395, Math.PI / 4)) {
-      return { height: 25.2, isAirfield: true };
+  for (const carrier of mapDef.layout.carriers) {
+    if (pointInsideRotatedBox2D(x, z, carrier.x, carrier.z, carrier.deckWidth, carrier.deckLength, carrier.rotationY)) {
+      return { height: carrier.deckHeight, isAirfield: true };
     }
-    // Team 2 Carrier deck range (76 width, 395 length, rotated -135deg)
-    if (pointInsideRotatedBox2D(x, z, 4000, 3000, 76, 395, -3 * Math.PI / 4)) {
-      return { height: 25.2, isAirfield: true };
-    }
+  }
+
+  // Heightmap path: bilinear lookup if data is cached
+  if (mapDef.terrain.kind === "heightmap") {
+    const data = getHeightmapData(mapDef.terrain.path);
+    if (data) return { height: sampleHeightmapAt(data, x, z), isAirfield: false };
+    return { height: mapDef.world.defaultGroundHeight, isAirfield: false };
   }
 
   const layout = getTerrainLayout(mapDef);

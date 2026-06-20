@@ -44,6 +44,8 @@ export type AeroState = {
 };
 const SPEED_OF_SOUND = 343;
 const GROUND_EFFECT_MAX = 1.22;
+const surfaceCache = new Map<string, AeroSurface[]>();
+const inertiaCache = new Map<string, THREE.Vector3>();
 function getAircraftQuaternion(pilot: Pilot) {
   return new THREE.Quaternion().setFromEuler(
     new THREE.Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
@@ -118,14 +120,18 @@ function getParasiticDragCoefficient(alphaDeg: number, baseCd: number) {
   return cd;
 }
 function getDefaultSurfaces(specs: AircraftSpecs): AeroSurface[] {
-  // Values are proportional game geometry.
-  // These should eventually move into aircraftData.ts per aircraft.
+  const cacheKey = `${specs.id}_${specs.wingArea}_${specs.aspectRatio}_${specs.aileronBoost ?? 1}`;
+  const cached = surfaceCache.get(cacheKey);
+  if (cached) return cached;
   const wingArea = specs.wingArea;
   const mainWingArea = wingArea * 0.72;
-  const aileronArea = wingArea * 0.08;
+  // Total aileron reference area. Surface-generated roll damping now owns the
+  // complete roll response, so this is sized for roughly 90–120 deg/s across
+  // the current aircraft roster without a second global damping torque.
+  const aileronArea = wingArea * 0.032;
   const hStabArea = wingArea * 0.16;
   const vStabArea = wingArea * 0.15;
-  return [
+  const surfaces: AeroSurface[] = [
     {
       name: "leftWing",
       area: mainWingArea * 0.5,
@@ -133,7 +139,7 @@ function getDefaultSurfaces(specs: AircraftSpecs): AeroSurface[] {
       normal: LOCAL_UP.clone(),
       aspectRatio: specs.aspectRatio,
       liftSlopePerDeg: specs.clAlpha,
-      cl0: specs.cl0 * 0.5,  // half of total CL0 per wing half
+      cl0: specs.cl0 * 0.5,
       dragScale: 1.0
     },
     {
@@ -191,6 +197,8 @@ function getDefaultSurfaces(specs: AircraftSpecs): AeroSurface[] {
       dragScale: 1.15
     }
   ];
+  surfaceCache.set(cacheKey, surfaces);
+  return surfaces;
 }
 function getSurfaceDeflectionDeg(surface: AeroSurface, controls: AeroControls) {
   if (!surface.controlAxis) return 0;
@@ -221,7 +229,7 @@ function getLocalVelocityAtSurface(
 function getSurfaceAoA(surface: AeroSurface, localSurfaceVelocity: THREE.Vector3) {
   if (surface.controlAxis === "rudder") {
     return THREE.MathUtils.radToDeg(
-      Math.atan2(localSurfaceVelocity.x, localSurfaceVelocity.z)
+      Math.atan2(-localSurfaceVelocity.x, localSurfaceVelocity.z)
     );
   }
   return THREE.MathUtils.radToDeg(
@@ -237,67 +245,6 @@ function forcePerpendicularToAirflow(
     .clone()
     .sub(airDir.clone().multiplyScalar(preferredWorldNormal.dot(airDir)));
   return safeNormalize(n, preferredWorldNormal);
-}
-function getRotationalDampingTorque(
-  localAngularVelocity: THREE.Vector3,
-  dynamicPressure: number,
-  specs: AircraftSpecs,
-  machControlMultiplier: number
-) {
-  // Rotational damping: aircraft naturally resists pitch/yaw/roll rates.
-  // Roll damping is strong. Pitch is medium. Yaw is medium-high.
-  const area = specs.wingArea;
-  const span = Math.sqrt(specs.aspectRatio * specs.wingArea);
-  const chord = specs.wingArea / Math.max(1, span);
-  const rollDamping = dynamicPressure * area * span * span * 0.009;
-  const pitchDamping = dynamicPressure * area * chord * chord * 0.08;
-  const yawDamping = dynamicPressure * area * span * span * 0.010;
-  return new THREE.Vector3(
-    -localAngularVelocity.x * pitchDamping, // x is Pitch
-    -localAngularVelocity.y * yawDamping,   // y is Yaw
-    -localAngularVelocity.z * rollDamping    // z is Roll
-  ).multiplyScalar(machControlMultiplier);
-}
-function getNaturalStabilityTorque(
-  aoaDeg: number,
-  sideslipDeg: number,
-  pilot: Pilot,
-  dynamicPressure: number,
-  specs: AircraftSpecs
-) {
-  // Natural pitch/yaw correction.
-  // Positive AoA pushes nose back down.
-  // Positive sideslip pushes nose back into airflow.
-  const area = specs.wingArea;
-  const span = Math.sqrt(specs.aspectRatio * specs.wingArea);
-  const chord = specs.wingArea / Math.max(1, span);
-  const tailHealth = pilot.damage.tail;
-  const wingHealth = (pilot.damage.leftWing + pilot.damage.rightWing) * 0.5;
-  const pitchRestoring =
-    -THREE.MathUtils.degToRad(aoaDeg) *
-    dynamicPressure *
-    area *
-    chord *
-    0.20 *
-    tailHealth;
-  const yawRestoring =
-    -THREE.MathUtils.degToRad(sideslipDeg) *
-    dynamicPressure *
-    area *
-    span *
-    0.18 *
-    tailHealth;
-  // Dihedral / roll stability: disabled per user request for max manual/realistic flight control.
-  const rollRestoring = 0;
-  // Local angular torque axes (Corrected physical mapping):
-  // x = pitch moment from elevator & pitch stability
-  // y = yaw moment from rudder & directional stability
-  // z = roll moment from ailerons & dihedral/roll stability
-  return new THREE.Vector3(
-    pitchRestoring,
-    yawRestoring,
-    rollRestoring
-  );
 }
 function applyDamageToSurface(surface: AeroSurface, pilot: Pilot) {
   let health = 1.0;
@@ -321,7 +268,6 @@ export function computeAeroSurfaceForces(args: {
   const { pilot, specs, controls } = args;
   const qBodyToWorld = getAircraftQuaternion(pilot);
   const qWorldToBody = qBodyToWorld.clone().invert();
-  const position = new THREE.Vector3(pilot.x, pilot.y, pilot.z);
   const velocityWorld = new THREE.Vector3(pilot.vx, pilot.vy, pilot.vz);
   const localVelocity = velocityWorld.clone().applyQuaternion(qWorldToBody);
   const speed = velocityWorld.length();
@@ -347,7 +293,6 @@ export function computeAeroSurfaceForces(args: {
   
   const totalForceWorld = new THREE.Vector3();
   const totalTorqueLocal = new THREE.Vector3();
-  const debug: AeroDebugVector[] = [];
   
   if (speed < 2) {
     return {
@@ -361,10 +306,10 @@ export function computeAeroSurfaceForces(args: {
       rightWingStalled: false,
       stalled: false,
       groundEffect,
-      debug
+      debug: []
     };
   }
-  
+
   let leftWingStalled = false;
   let rightWingStalled = false;
   const surfaces = args.surfaces ?? getDefaultSurfaces(specs);
@@ -463,19 +408,6 @@ export function computeAeroSurfaceForces(args: {
     const torqueWorld = new THREE.Vector3().crossVectors(rWorld, surfaceForceWorld);
     const torqueLocal = torqueWorld.clone().applyQuaternion(qWorldToBody);
     totalTorqueLocal.add(torqueLocal);
-    
-    debug.push({
-      name: `${surface.name}:lift`,
-      origin: position.clone().add(rWorld),
-      vector: liftForceWorld.clone().multiplyScalar(0.0008),
-      color: 0x22c55e
-    });
-    debug.push({
-      name: `${surface.name}:drag`,
-      origin: position.clone().add(rWorld),
-      vector: dragForceWorld.clone().multiplyScalar(0.0008),
-      color: 0xef4444
-    });
   }
   
   // Global central Airbrake drag force instead of duplicating across individual surfaces
@@ -506,39 +438,6 @@ export function computeAeroSurfaceForces(args: {
     const flapTorqueX = flapCm * dynamicPressure * specs.wingArea * chord;
     totalTorqueLocal.x += flapTorqueX;
   }
-  const dampingTorque = getRotationalDampingTorque(
-    args.localAngularVelocity,
-    dynamicPressure,
-    specs,
-    machControlMultiplier
-  );
-  const stabilityTorque = getNaturalStabilityTorque(
-    aoaDeg,
-    sideslipDeg,
-    pilot,
-    dynamicPressure,
-    specs
-  );
-  totalTorqueLocal.add(dampingTorque);
-  totalTorqueLocal.add(stabilityTorque);
-  debug.push({
-    name: "velocity",
-    origin: position.clone(),
-    vector: velocityWorld.clone().multiplyScalar(0.08),
-    color: 0x38bdf8
-  });
-  debug.push({
-    name: "stabilityTorque",
-    origin: position.clone(),
-    vector: stabilityTorque.clone().applyQuaternion(qBodyToWorld).multiplyScalar(0.0006),
-    color: 0xeab308
-  });
-  debug.push({
-    name: "dampingTorque",
-    origin: position.clone(),
-    vector: dampingTorque.clone().applyQuaternion(qBodyToWorld).multiplyScalar(0.0006),
-    color: 0xa855f7
-  });
   return {
     force: totalForceWorld,
     torque: totalTorqueLocal,
@@ -550,10 +449,13 @@ export function computeAeroSurfaceForces(args: {
     rightWingStalled,
     stalled: leftWingStalled || rightWingStalled,
     groundEffect,
-    debug
+    debug: []
   };
 }
 export function estimateInertia(specs: AircraftSpecs) {
+  const cacheKey = `${specs.id}_${specs.mass}_${specs.wingArea}_${specs.aspectRatio}`;
+  const cached = inertiaCache.get(cacheKey);
+  if (cached) return cached;
   const span = Math.sqrt(specs.aspectRatio * specs.wingArea);
   const chord = specs.wingArea / Math.max(1, span);
   const length = Math.max(7, chord * 4.2);
@@ -567,11 +469,12 @@ export function estimateInertia(specs: AircraftSpecs) {
   const iyy = (specs.mass / 12) * (length * length + span * span * 0.5);
   // roll: mostly fuselage + inner wing mass, tip mass is light — span fraction 0.15
   const izz = (specs.mass / 12) * (span * span * 0.15 + 1.2 * 1.2);
-  return new THREE.Vector3(ixx, iyy, izz);
+  const result = new THREE.Vector3(ixx, iyy, izz);
+  inertiaCache.set(cacheKey, result);
+  return result;
 }
 
 export class AerodynamicsEngine {
   public static computeForces = computeAeroSurfaceForces;
   public static estimateInertia = estimateInertia;
 }
-

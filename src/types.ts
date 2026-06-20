@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Vector3 } from "three";
 
 export enum AircraftClass {
   Balanced = "Balanced",
@@ -41,6 +40,9 @@ export interface AircraftSpecs {
   aspectRatio: number;        // AR
   oswaldEfficiency: number;   // e — Oswald span efficiency
   aileronBoost?: number;      // aileron area multiplier (default 1.0)
+  pitchRateDegPerSec?: number;
+  rollRateDegPerSec?: number;
+  yawRateDegPerSec?: number;
   color: string;
   secondaryColor: string;
   accentColor: string;
@@ -102,26 +104,46 @@ export enum MatchMode {
   EndlessFront = "Endless Front",
 }
 
-export enum GameMap {
-  IslandChain = "Island Chain",
-  DesertCanyon = "Desert Canyon",
-  AlpineValley = "Alpine Valley",
-  StormFront = "Storm Front",
+export { KnownMaps } from "./game/content/maps/mapTypes";
+export type { MapId } from "./game/content/maps/mapTypes";
+
+export type CameraMode = "third-person" | "first-person" | "bombsight";
+
+export interface BombSightInfo {
+  x: number;
+  y: number;
+  timeToImpact: number;
+  impactX: number;
+  impactZ: number;
+  valid: boolean;
 }
 
-export interface MapSpecs {
-  id: GameMap;
+export type CampaignObjectiveType = "destroy-ground" | "destroy-air";
+
+export interface CampaignMissionDefinition {
+  id: string;
+  order: number;
   name: string;
-  description: string;
-  hasCarriers: boolean;
-  hasCanyons: boolean;
-  cloudDensity: number; // 0 to 1
-  antiAirCount: number;
-  groundTargetsCount: number;
-  skyColor: string;
-  fogColor: string;
-  groundColor: string;
-  hasThunder: boolean;
+  operation: string;
+  briefing: string;
+  mapId: string;
+  mode: MatchMode;
+  aircraftId: string;
+  objectiveType: CampaignObjectiveType;
+  objectiveLabel: string;
+  targetCount: number;
+  timeLimitSeconds: number;
+  xpReward: number;
+  startOnGround?: boolean;
+}
+
+export interface CampaignMissionState {
+  missionId: string;
+  name: string;
+  objectiveLabel: string;
+  progress: number;
+  targetCount: number;
+  completed: boolean;
 }
 
 // 8 Hit zones per aircraft
@@ -235,12 +257,13 @@ export interface Pilot {
     aileronDeflection: number;
     rudderDeflection: number;
   };
-  pitchIntent?: number;
-  rollIntent?: number;
-  yawIntent?: number;
   elevatorDeflection?: number;
   aileronDeflection?: number;
   rudderDeflection?: number;
+  pitchIntent?: number;
+  rollIntent?: number;
+  yawIntent?: number;
+  lastCommand?: FlightCommand;
   flaps?: "up" | "combat" | "landing";
   gearDeployed?: boolean;
   airbrakeDeployed?: boolean;
@@ -329,6 +352,7 @@ export interface UserProgression {
   invertMouseY?: boolean;
   invertMouseX?: boolean;
   controlMode?: ControlMode;
+  completedCampaignMissions?: string[];
   stats: {
     battlesPlayed: number;
     kills: number;

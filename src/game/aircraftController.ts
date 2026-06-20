@@ -107,7 +107,7 @@ export class AircraftController {
           const behindPenalty = targetInForward < 0 ? 0.35 : 1.0;
 
           instructorPitch = MathUtils.clamp(
-            targetInUp * 1.8 * behindPenalty,
+            targetInUp * 1.8 * behindPenalty + (pilot.avx ?? 0) * 0.12,
             -1,
             1
           );
