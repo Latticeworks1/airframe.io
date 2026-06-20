@@ -20,14 +20,14 @@ PROTOCOL_VERSION = 1
 
 SERVER_HZ = 60
 NET_HZ = 20
-INPUT_STALE_MS = 250
-
 DT = 1.0 / SERVER_HZ
 NET_INTERVAL_TICKS = max(1, round(SERVER_HZ / NET_HZ))
 
 MAX_PLAYERS_PER_ROOM = 16
-MAX_PACKET_BYTES = 2048
+MAX_PACKET_BYTES = 4096
+INPUT_STALE_MS = 250
 EMPTY_ROOM_TTL_MS = 30_000
+CHAT_MAX_CHARS = 240
 
 WORLD_MIN = -1600.0
 WORLD_MAX = 1600.0
@@ -289,6 +289,21 @@ async def broadcast(room: Room, packet: Any, exclude: WebSocket | None = None):
         room.socket_players.pop(peer, None)
 
 
+async def send_to_player(room: Room, player_id: str, packet: Any):
+    payload = json.dumps(packet, separators=(",", ":"))
+
+    for ws, pid in list(room.socket_players.items()):
+        if pid != player_id:
+            continue
+
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            room.sockets.discard(ws)
+            room.socket_players.pop(ws, None)
+        return
+
+
 async def sim_loop():
     while True:
         await asyncio.sleep(DT)
@@ -324,7 +339,7 @@ async def sim_loop():
 
 
 @asynccontextmanager
-async def lifespan(app):
+async def lifespan(app: FastAPI):
     task = asyncio.create_task(sim_loop())
     yield
     task.cancel()
@@ -558,6 +573,51 @@ async def ws_room(ws: WebSocket, room_id: str):
                 room.players[pid].last_seen_ms = now_ms()
                 continue
 
+            if kind == "chat":
+                if len(packet) < 2:
+                    await send(ws, ["e", "bad_chat", "requires ['chat', text]"])
+                    continue
+
+                if not player_id or player_id not in room.players:
+                    await send(ws, ["e", "chat_not_joined", "join before chat"])
+                    continue
+
+                text = clean_str(packet[1], CHAT_MAX_CHARS)
+
+                if not text:
+                    continue
+
+                player = room.players[player_id]
+
+                await broadcast(room, [
+                    "chat",
+                    room.tick,
+                    player.id,
+                    player.name,
+                    text,
+                    now_ms(),
+                ])
+                continue
+
+            if kind == "sig":
+                if len(packet) < 3:
+                    await send(ws, ["e", "bad_signal", "requires ['sig', toPlayerId, payload]"])
+                    continue
+
+                if not player_id:
+                    await send(ws, ["e", "signal_not_joined", "join before signaling"])
+                    continue
+
+                to_player_id = clean_str(packet[1], 80)
+                payload = packet[2]
+
+                if to_player_id not in room.players:
+                    await send(ws, ["e", "signal_target_missing", to_player_id])
+                    continue
+
+                await send_to_player(room, to_player_id, ["sig", player_id, payload])
+                continue
+
             await send(ws, ["e", "unknown_packet", str(kind)])
 
     except WebSocketDisconnect:
@@ -610,7 +670,7 @@ INDEX_HTML = """
       padding: 10px 12px;
       font-size: 13px;
       line-height: 1.45;
-      min-width: 370px;
+      min-width: 390px;
       z-index: 10;
     }
 
@@ -622,11 +682,39 @@ INDEX_HTML = """
       padding: 3px 5px;
     }
 
+    #chat {
+      position: fixed;
+      left: 14px;
+      bottom: 12px;
+      width: 390px;
+      background: rgba(5, 7, 11, 0.80);
+      border: 1px solid #2f3b52;
+      padding: 10px;
+      font-size: 13px;
+      z-index: 10;
+    }
+
+    #chatlog {
+      height: 130px;
+      overflow: auto;
+      white-space: pre-wrap;
+      margin-bottom: 8px;
+    }
+
+    #chatinput {
+      width: 100%;
+      box-sizing: border-box;
+      background: #111722;
+      color: #e8dcc0;
+      border: 1px solid #2f3b52;
+      padding: 6px 8px;
+    }
+
     #log {
       position: fixed;
       right: 14px;
       bottom: 12px;
-      width: 490px;
+      width: 500px;
       max-height: 180px;
       overflow: auto;
       background: rgba(5, 7, 11, 0.80);
@@ -654,7 +742,13 @@ INDEX_HTML = """
     <div>Pending inputs: <span id="pending">0</span></div>
     <div>Correction error: <span id="error">0</span></div>
     <div>Protocol: <span id="proto">?</span></div>
+    <div>DataChannels: <span id="dc">0</span></div>
     <div>Controls: W/S pitch, A/D yaw, Q/E roll, Shift/Ctrl throttle</div>
+  </div>
+
+  <div id="chat">
+    <div id="chatlog"></div>
+    <input id="chatinput" placeholder="chat..." maxlength="240">
   </div>
 
   <pre id="log"></pre>
@@ -678,6 +772,9 @@ const tickEl = document.getElementById("tick");
 const pendingEl = document.getElementById("pending");
 const errorEl = document.getElementById("error");
 const protoEl = document.getElementById("proto");
+const dcEl = document.getElementById("dc");
+const chatLogEl = document.getElementById("chatlog");
+const chatInputEl = document.getElementById("chatinput");
 
 let ws = null;
 let keys = new Set();
@@ -686,6 +783,11 @@ let players = new Map();
 let entities = new Map();
 let meshes = new Map();
 let histories = new Map();
+
+let peerConnections = new Map();
+let dataChannels = new Map();
+let knownPeerIds = new Set();
+let iceConfig = null;
 
 let pendingInputs = [];
 
@@ -744,7 +846,6 @@ document.body.appendChild(renderer.domElement);
 const sun = new THREE.DirectionalLight(0xffffff, 2.2);
 sun.position.set(240, 700, 360);
 scene.add(sun);
-
 scene.add(new THREE.AmbientLight(0x8796aa, 0.85));
 
 const grid = new THREE.GridHelper(3200, 64, 0x3c4a66, 0x1d2738);
@@ -758,15 +859,12 @@ floor.rotation.x = -Math.PI / 2;
 floor.position.y = -0.5;
 scene.add(floor);
 
-const axisMatX = new THREE.LineBasicMaterial({ color: 0x663333 });
-const axisMatZ = new THREE.LineBasicMaterial({ color: 0x333366 });
-
 scene.add(new THREE.Line(
   new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(-1600, 2, 0),
     new THREE.Vector3(1600, 2, 0)
   ]),
-  axisMatX
+  new THREE.LineBasicMaterial({ color: 0x663333 })
 ));
 
 scene.add(new THREE.Line(
@@ -774,7 +872,7 @@ scene.add(new THREE.Line(
     new THREE.Vector3(0, 2, -1600),
     new THREE.Vector3(0, 2, 1600)
   ]),
-  axisMatZ
+  new THREE.LineBasicMaterial({ color: 0x333366 })
 ));
 
 window.addEventListener("resize", () => {
@@ -785,8 +883,17 @@ window.addEventListener("resize", () => {
 
 window.addEventListener("keydown", event => keys.add(event.key.toLowerCase()));
 window.addEventListener("keyup", event => keys.delete(event.key.toLowerCase()));
-
 roomInput.addEventListener("change", connect);
+
+chatInputEl.addEventListener("keydown", event => {
+  if (event.key !== "Enter") return;
+
+  const text = chatInputEl.value.trim();
+  if (!text) return;
+
+  send(["chat", text]);
+  chatInputEl.value = "";
+});
 
 function colorFromId(id) {
   let h = 0;
@@ -799,12 +906,20 @@ function log(msg) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+function addChatLine(name, text) {
+  chatLogEl.textContent += `${name}: ${text}\\n`;
+  chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
 function connect() {
   if (ws) ws.close();
+
+  for (const id of [...peerConnections.keys()]) closePeer(id);
 
   players.clear();
   entities.clear();
   histories.clear();
+  knownPeerIds.clear();
 
   meshes.forEach(mesh => scene.remove(mesh));
   meshes.clear();
@@ -887,6 +1002,7 @@ function applyPacket(packet) {
     for (const packedPlayer of playerList) {
       const p = unpackPlayer(packedPlayer);
       players.set(p.id, p);
+      if (p.id !== me.id) considerPeer(p.id);
     }
 
     for (const packedEntity of entityList) {
@@ -943,9 +1059,29 @@ function applyPacket(packet) {
       pushHistory(e.id, e);
       ensureMesh(e);
 
+      if (p.id !== me.id) considerPeer(p.id);
+
       countEl.textContent = String(players.size);
       log("joined " + p.name);
     }
+
+    return;
+  }
+
+  if (type === "chat") {
+    const name = packet[3] || packet[2].slice(0, 8);
+    const text = packet[4] || "";
+    addChatLine(name, text);
+    return;
+  }
+
+  if (type === "sig") {
+    const fromPeerId = packet[1];
+    const payload = packet[2];
+
+    handleSignal(fromPeerId, payload).catch(err => {
+      log("signal failed: " + err.message);
+    });
 
     return;
   }
@@ -957,6 +1093,7 @@ function applyPacket(packet) {
     players.delete(pid);
     entities.delete(eid);
     histories.delete(eid);
+    closePeer(pid);
 
     const mesh = meshes.get(eid);
     if (mesh) {
@@ -1010,13 +1147,14 @@ function unpackEntity(a) {
 
 function unpackDelta(a) {
   const existing = entities.get(a[0]);
+  const ownerId = existing?.ownerId || ownerFromEntityId(a[0]);
 
   return {
     id: a[0],
     kind: existing?.kind || "aircraft",
-    ownerId: existing?.ownerId || ownerFromEntityId(a[0]),
-    name: existing?.name || "P-" + ownerFromEntityId(a[0]).slice(0, 6),
-    color: existing?.color || colorFromId(ownerFromEntityId(a[0])),
+    ownerId,
+    name: existing?.name || "P-" + ownerId.slice(0, 6),
+    color: existing?.color || colorFromId(ownerId),
     ack: a[1],
     x: a[2],
     y: a[3],
@@ -1313,6 +1451,237 @@ function updateCamera() {
   camera.lookAt(me.x, me.y + 22, me.z);
 }
 
+async function getIceConfig() {
+  if (iceConfig) return iceConfig;
+
+  const res = await fetch("/ice");
+  const data = await res.json();
+
+  if (!res.ok) throw new Error(JSON.stringify(data));
+  if (!Array.isArray(data.iceServers) || data.iceServers.length === 0) {
+    throw new Error("invalid ICE config");
+  }
+
+  iceConfig = data;
+  return iceConfig;
+}
+
+function updateDcCount() {
+  let open = 0;
+
+  for (const dc of dataChannels.values()) {
+    if (dc.readyState === "open") open++;
+  }
+
+  dcEl.textContent = String(open);
+}
+
+function shouldOfferTo(peerId) {
+  return me.id < peerId;
+}
+
+async function ensurePeerConnection(peerId) {
+  if (peerId === me.id) return null;
+
+  let pc = peerConnections.get(peerId);
+  if (pc) return pc;
+
+  const cfg = await getIceConfig();
+
+  pc = new RTCPeerConnection({
+    iceServers: cfg.iceServers
+  });
+
+  peerConnections.set(peerId, pc);
+
+  pc.onicecandidate = event => {
+    if (!event.candidate) return;
+
+    send([
+      "sig",
+      peerId,
+      {
+        type: "candidate",
+        candidate: event.candidate
+      }
+    ]);
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "connected") {
+      log("pc connected " + peerId.slice(0, 8));
+    }
+
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+      closePeer(peerId);
+    }
+  };
+
+  pc.ondatachannel = event => {
+    bindDataChannel(peerId, event.channel);
+  };
+
+  return pc;
+}
+
+function bindDataChannel(peerId, dc) {
+  const old = dataChannels.get(peerId);
+  if (old && old !== dc) {
+    old.onopen = null;
+    old.onmessage = null;
+    old.onclose = null;
+    old.onerror = null;
+    old.close();
+  }
+
+  dc.binaryType = "arraybuffer";
+
+  dc.onopen = () => {
+    dataChannels.set(peerId, dc);
+    updateDcCount();
+    log("dc open " + peerId.slice(0, 8));
+  };
+
+  dc.onmessage = event => {
+    let msg;
+
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
+    if (msg.t === "telemetry") {
+      return;
+    }
+
+    if (msg.t === "ping") {
+      dc.send(JSON.stringify({ t: "pong", at: performance.now() }));
+    }
+  };
+
+  dc.onclose = () => {
+    if (dataChannels.get(peerId) === dc) {
+      dataChannels.delete(peerId);
+    }
+    updateDcCount();
+  };
+
+  dc.onerror = () => {
+    log("dc error " + peerId.slice(0, 8));
+  };
+}
+
+async function openDataChannelTo(peerId) {
+  const pc = await ensurePeerConnection(peerId);
+  if (!pc) return;
+
+  const old = dataChannels.get(peerId);
+  if (old) old.close();
+
+  const dc = pc.createDataChannel("game-state", {
+    ordered: false,
+    maxRetransmits: 0
+  });
+
+  bindDataChannel(peerId, dc);
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  send([
+    "sig",
+    peerId,
+    {
+      type: "offer",
+      sdp: offer
+    }
+  ]);
+}
+
+async function handleSignal(fromPeerId, payload) {
+  const pc = await ensurePeerConnection(fromPeerId);
+  if (!pc) return;
+
+  if (payload.type === "offer") {
+    await pc.setRemoteDescription(payload.sdp);
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    send([
+      "sig",
+      fromPeerId,
+      {
+        type: "answer",
+        sdp: answer
+      }
+    ]);
+
+    return;
+  }
+
+  if (payload.type === "answer") {
+    await pc.setRemoteDescription(payload.sdp);
+    return;
+  }
+
+  if (payload.type === "candidate") {
+    await pc.addIceCandidate(payload.candidate);
+  }
+}
+
+function closePeer(peerId) {
+  const dc = dataChannels.get(peerId);
+  if (dc) dc.close();
+
+  const pc = peerConnections.get(peerId);
+  if (pc) pc.close();
+
+  dataChannels.delete(peerId);
+  peerConnections.delete(peerId);
+  knownPeerIds.delete(peerId);
+  updateDcCount();
+}
+
+async function considerPeer(peerId) {
+  if (!peerId || peerId === me.id) return;
+  if (knownPeerIds.has(peerId)) return;
+
+  knownPeerIds.add(peerId);
+
+  await ensurePeerConnection(peerId);
+
+  if (shouldOfferTo(peerId)) {
+    await openDataChannelTo(peerId);
+  }
+}
+
+function broadcastTelemetryOverDc() {
+  const payload = JSON.stringify({
+    t: "telemetry",
+    id: me.id,
+    eid: me.entityId,
+    seq: inputSeq,
+    x: me.x,
+    y: me.y,
+    z: me.z,
+    vx: me.vx,
+    vy: me.vy,
+    vz: me.vz,
+    yaw: me.yaw,
+    pitch: me.pitch,
+    roll: me.roll,
+    at: performance.now()
+  });
+
+  for (const dc of dataChannels.values()) {
+    if (dc.readyState !== "open") continue;
+    if (dc.bufferedAmount > 262144) continue;
+    dc.send(payload);
+  }
+}
+
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -1361,6 +1730,8 @@ function frame(now) {
       input.roll,
       input.fire ? 1 : 0
     ]);
+
+    broadcastTelemetryOverDc();
   }
 
   updateMeshes();
