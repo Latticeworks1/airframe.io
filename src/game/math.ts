@@ -18,12 +18,23 @@ export function generateId(): string {
   return Math.random().toString(36).substring(2, 11);
 }
 
-export function closestPointOnSegment(a: THREE.Vector3, b: THREE.Vector3, p: THREE.Vector3): THREE.Vector3 {
-  const ab = b.clone().sub(a);
-  const denom = ab.lengthSq();
-  if (denom < 1e-8) return a.clone();
-  const t = THREE.MathUtils.clamp(p.clone().sub(a).dot(ab) / denom, 0, 1);
-  return a.clone().addScaledVector(ab, t);
+const abTmp = new THREE.Vector3();
+const apTmp = new THREE.Vector3();
+
+export function closestPointOnSegment(
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  p: THREE.Vector3,
+  out: THREE.Vector3 = new THREE.Vector3()
+): THREE.Vector3 {
+  abTmp.copy(b).sub(a);
+  const denom = abTmp.lengthSq();
+  if (denom < 1e-8) {
+    return out.copy(a);
+  }
+  apTmp.copy(p).sub(a);
+  const t = THREE.MathUtils.clamp(apTmp.dot(abTmp) / denom, 0, 1);
+  return out.copy(a).addScaledVector(abTmp, t);
 }
 
 export function getPlaneHitRadius(specs: AircraftSpecs): number {

@@ -4,27 +4,59 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { UserProgression, MatchMode, GameMap, AmmoBelt, KeyState, Pilot, KillEvent, ControlMode, SkyZone, LeadIndicatorInfo } from "./types";
+import {
+  UserProgression,
+  MatchMode,
+  AmmoBelt,
+  Pilot,
+  KillEvent,
+  ControlMode,
+  SkyZone,
+  LeadIndicatorInfo,
+  CameraMode,
+  BombSightInfo,
+  CampaignMissionState,
+  WeaponType,
+  GroundTarget
+} from "./types";
 import { MainMenu } from "./components/MainMenu";
 import { PilotRegistration } from "./components/PilotRegistration";
 import { GameHUD } from "./components/GameHUD";
 import { GameEngine } from "./game/gameEngine";
 import { WorldRenderer } from "./game/worldRenderer";
 import { InputManager } from "./game/inputManager";
-import { MAPS, DEFAULT_AIRCRAFT } from "./game/aircraftData";
+import { DEFAULT_AIRCRAFT } from "./game/aircraftData";
+import { MAP_REGISTRY } from "./game/content/maps/registry";
+import { KnownMaps } from "./game/content/maps/mapTypes";
+import { FlightPhysicsEngine } from "./game/flightModel";
 import { Vector3, Quaternion, Euler } from "three";
-import { Plane, Award, Trophy, ArrowRight, ShieldCheck, Shell, Volume2 } from "lucide-react";
+import { Award, Trophy, ArrowRight } from "lucide-react";
 
 // LocalStorage persistent store key
 const STORAGE_KEY = "airframe_io_save_data";
-type CameraMode = "third-person" | "first-person";
+const MULTIPLAYER_SESSION_KEY = "airframe_io_multiplayer_session";
+
+function getMultiplayerSessionId(): string {
+  const existing = localStorage.getItem(MULTIPLAYER_SESSION_KEY);
+  if (existing) return existing;
+
+  const sessionId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `session_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  localStorage.setItem(MULTIPLAYER_SESSION_KEY, sessionId);
+  return sessionId;
+}
 type HudSnapshot = {
   pilots: Pilot[];
+  groundTargets: GroundTarget[];
   zones: SkyZone[];
   killFeed: KillEvent[];
   team1Score: number;
   team2Score: number;
   matchTimer: number;
+  bombSightInfo: BombSightInfo | null;
+  campaignState: CampaignMissionState | null;
 };
 
 const INITIAL_PROGRESSION: UserProgression = {
@@ -56,7 +88,13 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showDebrief, setShowDebrief] = useState(false);
   const [showRegistration, setShowRegistration] = useState(false);
-  const [debriefData, setDebriefData] = useState<{ victory: boolean; xpEarned: number; kills: number; structures: number } | null>(null);
+  const [debriefData, setDebriefData] = useState<{
+    victory: boolean;
+    xpEarned: number;
+    kills: number;
+    structures: number;
+    missionName?: string;
+  } | null>(null);
 
   // Active game instances
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -71,11 +109,14 @@ export default function App() {
   // Low-frequency React snapshot. Per-frame targeting transforms bypass React.
   const [hudSnapshot, setHudSnapshot] = useState<HudSnapshot>({
     pilots: [],
+    groundTargets: [],
     zones: [],
     killFeed: [],
     team1Score: 0,
     team2Score: 0,
-    matchTimer: 360
+    matchTimer: 360,
+    bombSightInfo: null,
+    campaignState: null
   });
   const [activeMatchMode, setActiveMatchMode] = useState<MatchMode>(MatchMode.AirSupremacy);
 
@@ -88,6 +129,7 @@ export default function App() {
 
   const [isPaused, setIsPaused] = useState(false);
   const isPausedRef = useRef(false);
+  const [showTacticalMap, setShowTacticalMap] = useState(false);
 
   const togglePause = () => {
     const newVal = !isPausedRef.current;
@@ -103,7 +145,17 @@ export default function App() {
 
   const toggleCameraMode = () => {
     setActiveCameraMode(
-      cameraModeRef.current === "third-person" ? "first-person" : "third-person"
+      cameraModeRef.current === "first-person"
+        ? "third-person"
+        : "first-person"
+    );
+  };
+
+  const toggleBombSight = () => {
+    setActiveCameraMode(
+      cameraModeRef.current === "bombsight"
+        ? "third-person"
+        : "bombsight"
     );
   };
 
@@ -129,6 +181,7 @@ export default function App() {
       }, 180);
       return () => clearTimeout(timer);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hitmarker.key]);
 
   // Load persistence
@@ -175,12 +228,14 @@ export default function App() {
     selectedPlaneId: string,
     belt: AmmoBelt,
     mods: string[],
-    mapId: GameMap,
+    mapId: string,
     mode: MatchMode,
     isMultiplayer: boolean,
-    startOnGround: boolean = false
+    startOnGround: boolean = false,
+    campaignMissionId?: string
   ) => {
     setActiveCameraMode("third-person");
+    setShowTacticalMap(false);
     setIsPlaying(true);
     setShowDebrief(false);
     setActiveMatchMode(mode);
@@ -189,7 +244,16 @@ export default function App() {
 
     // Short timeout to let the Canvas container render, then init Three.js
     setTimeout(() => {
-      initThreeAndGame(selectedPlaneId, belt, mods, mapId, mode, isMultiplayer, startOnGround);
+      initThreeAndGame(
+        selectedPlaneId,
+        belt,
+        mods,
+        mapId,
+        mode,
+        isMultiplayer,
+        startOnGround,
+        campaignMissionId
+      );
     }, 150);
   };
 
@@ -197,17 +261,18 @@ export default function App() {
     planeId: string,
     belt: AmmoBelt,
     mods: string[],
-    mapId: GameMap,
+    mapId: string,
     mode: MatchMode,
     isMultiplayer: boolean,
-    startOnGround: boolean = false
+    startOnGround: boolean = false,
+    campaignMissionId?: string
   ) => {
     if (!canvasContainerRef.current) return;
 
-    const mapSpecs = MAPS.find(m => m.id === mapId) || MAPS[0];
+    const mapDef = MAP_REGISTRY[mapId] ?? MAP_REGISTRY[KnownMaps.IslandChain];
 
     // 1. Initialize 3D Renderer
-    const renderer3D = new WorldRenderer(canvasContainerRef.current, mapSpecs, () => {
+    const renderer3D = new WorldRenderer(canvasContainerRef.current, mapDef, () => {
       console.log("WebGL World initialized successfully.");
     });
     renderer3DRef.current = renderer3D;
@@ -231,7 +296,8 @@ export default function App() {
         handleMatchCompletion(victory, xpEarned, engine, renderer3D);
       },
       progression.nickname,
-      startOnGround
+      startOnGround,
+      campaignMissionId
     );
 
     engine.onLocalPlayerHit = (tgtId, isGround) => {
@@ -249,6 +315,14 @@ export default function App() {
       });
     };
 
+    engine.onProjectileImpact = (type, position) => {
+      const size =
+        type === WeaponType.BOMB ? 2.8 :
+        type === WeaponType.ROCKET ? 1.5 :
+        0.55;
+      renderer3D.triggerExplosion(position.x, position.y, position.z, size);
+    };
+
     const player = engine.pilots.find(p => p.id === "player");
     if (player) {
       player.controlMode = progression.controlMode || ControlMode.MouseAim;
@@ -262,11 +336,16 @@ export default function App() {
     const inputManager = new InputManager();
     inputManagerRef.current = inputManager;
     inputManager.onCameraToggle = toggleCameraMode;
+    inputManager.onBombSightToggle = toggleBombSight;
+    inputManager.onTacticalMapToggle = () => {
+      setShowTacticalMap(current => !current);
+    };
     inputManager.init();
 
     // --- WebSocket Multiplayer Setup Section ---
     let socket: WebSocket | null = null;
-    const myPilotId = "pilot_" + Math.random().toString(36).substring(2, 8);
+    const multiplayerSessionId = getMultiplayerSessionId();
+    const myPilotId = `pilot_${multiplayerSessionId.replace(/[^a-z0-9]/gi, "").slice(0, 16)}`;
     const myCallsign = progression.nickname || "Maverick_99";
 
     if (isMultiplayer) {
@@ -288,10 +367,10 @@ export default function App() {
           if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send(JSON.stringify({
               type: "join",
-              roomId: `${mapId}_${mode}`,
+              queueKey: `${mapId}_${mode}`,
+              sessionId: multiplayerSessionId,
               pilotId: myPilotId,
               name: `${myCallsign} (You)`,
-              team: Math.random() < 0.5 ? 1 : 2,
               specs: localPlayer?.specs || DEFAULT_AIRCRAFT[0],
               skin: progression.customizations.skin || "default",
               ammo: localPlayer?.ammo || {}
@@ -305,6 +384,10 @@ export default function App() {
 
           if (msg.type === "welcome") {
             engine.isHost = (msg.hostId === myPilotId);
+            const localPlayer = engine.pilots.find(p => p.id === "player");
+            if (localPlayer && (msg.assignedTeam === 1 || msg.assignedTeam === 2)) {
+              localPlayer.team = msg.assignedTeam;
+            }
             // Sync initial other remote players into engine
             // Keep player and bots if we are host, otherwise filter out old remotes
             engine.pilots = engine.pilots.filter(p => p.id === "player" || p.isBot);
@@ -362,6 +445,16 @@ export default function App() {
               engine.team1Score = msg.scores.team1 ?? 0;
               engine.team2Score = msg.scores.team2 ?? 0;
             }
+          }
+
+          else if (msg.type === "join_rejected") {
+            console.warn("Multiplayer join rejected:", msg.reason);
+            if (msg.reason === "duplicate_session") {
+              window.alert("This pilot is already active in another multiplayer match.");
+            }
+            socket?.close();
+            setActiveEngine(null);
+            setIsPlaying(false);
           }
 
           else if (msg.type === "player_joined") {
@@ -449,6 +542,18 @@ export default function App() {
             engine.isHost = (msg.hostId === myPilotId);
           }
 
+          else if (msg.type === "damage_inflicted") {
+            const localPlayer = engine.pilots.find(p => p.id === "player");
+            if (localPlayer) {
+              const spot = new Vector3(
+                msg.hitSpotLocal.x,
+                msg.hitSpotLocal.y,
+                msg.hitSpotLocal.z
+              );
+              FlightPhysicsEngine.applyDamage(localPlayer, msg.damage, msg.bulletType, spot);
+            }
+          }
+
           else if (msg.type === "bots_updated") {
             if (!engine.isHost) {
               msg.bots.forEach((syncBot: any) => {
@@ -504,6 +609,19 @@ export default function App() {
           }));
         }
       };
+
+      engine.onPlayerDamage = (shooterId, targetId, damage, bulletType, hitSpotLocal) => {
+        if (shooterId !== "player") return;
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({
+            type: "damage_inflicted",
+            targetId,
+            damage,
+            bulletType,
+            hitSpotLocal: { x: hitSpotLocal.x, y: hitSpotLocal.y, z: hitSpotLocal.z }
+          }));
+        }
+      };
     }
   }
 
@@ -513,12 +631,47 @@ export default function App() {
     const playerTargetPoint = new Vector3();
     const activeAimPos = { x: 0, y: 0 };
     let activeAimPosInitialized = false;
+    let playerWasDead = false;
     let lastSendTime = 0;
     let lastHudSyncTime = 0;
     let fpsWindowStart = performance.now();
     let fpsFrameCount = 0;
     let fpsElement: HTMLElement | null = null;
-    let physDebugElement: HTMLElement | null = null;
+
+    // Per-match telemetry — streams frames to /telemetry-ws in 100ms batches.
+    // Written to telemetry.jsonl on the server in real time; no memory accumulation.
+    type TelemetryFrame = {
+      t: number; spd: number; alt: number; thr: number;
+      avP: number; avQ: number; avR: number;
+      mx: number; my: number; mz: number;
+      aoa: number; ss: number; qPa: number;
+      lw: boolean; rw: boolean; sev: number;
+      elv: number; ail: number; rud: number;
+      pitch: number; roll: number; yaw: number;
+      // absolute world position and body-axis unit vectors in world space
+      px: number; py: number; pz: number;
+      fwX: number; fwY: number; fwZ: number;
+      upX: number; upY: number; upZ: number;
+      rtX: number; rtY: number; rtZ: number;
+      cm: number;
+      cp: number; cr: number; cy: number;
+      mp: number; mr: number; myw: number;
+      ax: number; ay: number;
+    };
+    let telemPending: TelemetryFrame[] = [];
+    const telemWs = new WebSocket(`ws://${location.host}/telemetry-ws`);
+    const roundTelemetry = (value: number, decimals: number) => {
+      const scale = 10 ** decimals;
+      return Math.round(value * scale) / scale;
+    };
+
+    const flushTelemetry = () => {
+      if (telemPending.length === 0 || telemWs.readyState !== WebSocket.OPEN) return;
+      telemWs.send(JSON.stringify(telemPending));
+      telemPending = [];
+    };
+    const telemFlushInterval = setInterval(flushTelemetry, 100);
+
     let leadHudElements: {
       target: HTMLElement;
       lead: HTMLElement;
@@ -611,8 +764,20 @@ export default function App() {
 
       // Tick dynamics equations if not paused
       if (!isPausedRef.current) {
+        engine.secondaryWeaponPreference =
+          cameraModeRef.current === "bombsight" ? WeaponType.BOMB : null;
         engine.update(dt, inputFrame, playerTargetPoint);
       }
+
+      const playerIsDead = !player || player.damage.fuselage <= 0;
+      if (playerWasDead && player && !playerIsDead) {
+        activeAimPos.x = 0;
+        activeAimPos.y = 0;
+        activeAimPosInitialized = true;
+        inputManager.recenterAim();
+        playerTargetPoint.set(player.x, player.y, player.z);
+      }
+      playerWasDead = playerIsDead;
 
       // Throttled: Send our local state updates to multiplayer server (35ms intervals)
       if (isMultiplayer && socket && socket.readyState === WebSocket.OPEN && now - lastSendTime > 35) {
@@ -669,11 +834,16 @@ export default function App() {
         lastHudSyncTime = now;
         setHudSnapshot({
           pilots: [...engine.pilots],
+          groundTargets: [...engine.groundTargets],
           zones: [...engine.skyZones],
           killFeed: [...engine.killFeed],
           team1Score: engine.team1Score,
           team2Score: engine.team2Score,
-          matchTimer: engine.matchTimer
+          matchTimer: engine.matchTimer,
+          bombSightInfo: renderer3D.bombSightInfo,
+          campaignState: engine.campaignState
+            ? { ...engine.campaignState }
+            : null
         });
       }
 
@@ -707,23 +877,70 @@ export default function App() {
         fpsFrameCount = 0;
       }
 
-      // Physics debug overlay — updated every frame directly on the DOM element.
+      // Telemetry — queue one frame per tick, flushed every 100ms via telemWs
       if (player?.physicsDebug) {
-        physDebugElement ??= document.getElementById("hud-phys-debug");
-        if (physDebugElement) {
-          const d = player.physicsDebug;
-          const spd = Math.sqrt(player.vx**2 + player.vy**2 + player.vz**2) * 3.6;
-          const lw = d.leftWingStalled  ? "L" : ".";
-          const rw = d.rightWingStalled ? "R" : ".";
-          const avpDeg = ((player.avz ?? 0) * 57.3).toFixed(1);
-          const avqDeg = ((player.avx ?? 0) * 57.3).toFixed(1);
-          const avrDeg = ((player.avy ?? 0) * 57.3).toFixed(1);
-          physDebugElement.textContent =
-            `SPD ${spd.toFixed(0)} ALT ${player.y.toFixed(0)}  AoA ${d.aoaDeg.toFixed(1)}°  SS ${d.sideslipDeg.toFixed(1)}°  M ${d.mach.toFixed(2)}  q ${d.dynamicPressure.toFixed(0)}Pa\n` +
-            `avP ${avpDeg}  avQ ${avqDeg}  avR ${avrDeg} deg/s  stall[${lw}${rw}] ${(d.stallSeverity*100).toFixed(0)}%\n` +
-            `Mx ${d.aeroTorqueX.toFixed(0)}  My ${d.aeroTorqueY.toFixed(0)}  Mz ${d.aeroTorqueZ.toFixed(0)} N·m\n` +
-            `elv ${d.elevatorDeflection.toFixed(2)}  ail ${d.aileronDeflection.toFixed(2)}  rud ${d.rudderDeflection.toFixed(2)}`;
-        }
+        const d = player.physicsDebug;
+        const spd = Math.sqrt(player.vx**2 + player.vy**2 + player.vz**2) * 3.6;
+        const bodyQ = new Quaternion().setFromEuler(new Euler(player.pitch, player.yaw, player.roll, "YXZ"));
+        const fwd = new Vector3(0, 0, 1).applyQuaternion(bodyQ);
+        const upv = new Vector3(0, 1, 0).applyQuaternion(bodyQ);
+        const rgt = new Vector3(1, 0, 0).applyQuaternion(bodyQ);
+        const manualPitch = (inputFrame.held.w ? 1 : 0) - (inputFrame.held.s ? 1 : 0);
+        const manualRoll = (inputFrame.held.d ? 1 : 0) - (inputFrame.held.a ? 1 : 0);
+        const manualYaw =
+          (inputFrame.held.arrowRight ? 1 : 0) -
+          (inputFrame.held.arrowLeft ? 1 : 0) +
+          (inputFrame.held.e ? 0.65 : 0) -
+          (inputFrame.held.q ? 0.65 : 0);
+        const controlMode =
+          player.controlMode === ControlMode.MouseJoystick ? 1 :
+          player.controlMode === ControlMode.KeyboardDirect ? 2 : 0;
+        telemPending.push({
+          t:    roundTelemetry(player.physicsTime ?? 0, 3),
+          spd:  roundTelemetry(spd, 1),
+          alt:  roundTelemetry(player.y, 1),
+          thr:  roundTelemetry(player.throttle, 2),
+          avP:  roundTelemetry((player.avz ?? 0) * 57.296, 2),
+          // Body +X rotation is nose-down; expose pitch response as nose-up-positive.
+          avQ:  roundTelemetry(-(player.avx ?? 0) * 57.296, 2),
+          avR:  roundTelemetry((player.avy ?? 0) * 57.296, 2),
+          mx:   roundTelemetry(d.aeroTorqueX, 0),
+          my:   roundTelemetry(d.aeroTorqueY, 0),
+          mz:   roundTelemetry(d.aeroTorqueZ, 0),
+          aoa:  roundTelemetry(d.aoaDeg, 2),
+          ss:   roundTelemetry(d.sideslipDeg, 2),
+          qPa:  roundTelemetry(d.dynamicPressure, 0),
+          lw:   d.leftWingStalled,
+          rw:   d.rightWingStalled,
+          sev:  roundTelemetry(d.stallSeverity, 3),
+          elv:  roundTelemetry(d.elevatorDeflection, 3),
+          ail:  roundTelemetry(d.aileronDeflection, 3),
+          rud:  roundTelemetry(d.rudderDeflection, 3),
+          pitch: roundTelemetry(-player.pitch, 4),
+          roll:  roundTelemetry(player.roll, 4),
+          yaw:   roundTelemetry(player.yaw, 4),
+          px: roundTelemetry(player.x, 1),
+          py: roundTelemetry(player.y, 1),
+          pz: roundTelemetry(player.z, 1),
+          fwX: roundTelemetry(fwd.x, 4),
+          fwY: roundTelemetry(fwd.y, 4),
+          fwZ: roundTelemetry(fwd.z, 4),
+          upX: roundTelemetry(upv.x, 4),
+          upY: roundTelemetry(upv.y, 4),
+          upZ: roundTelemetry(upv.z, 4),
+          rtX: roundTelemetry(rgt.x, 4),
+          rtY: roundTelemetry(rgt.y, 4),
+          rtZ: roundTelemetry(rgt.z, 4),
+          cm: controlMode,
+          cp: roundTelemetry(player.lastCommand?.pitch ?? 0, 3),
+          cr: roundTelemetry(player.lastCommand?.roll ?? 0, 3),
+          cy: roundTelemetry(player.lastCommand?.yaw ?? 0, 3),
+          mp: manualPitch,
+          mr: manualRoll,
+          myw: roundTelemetry(manualYaw, 2),
+          ax: roundTelemetry(activeAimPos.x, 3),
+          ay: roundTelemetry(activeAimPos.y, 3),
+        });
       }
 
       // Clear transient edges and mouse movement only after every frame consumer has read them.
@@ -737,6 +954,9 @@ export default function App() {
     // Store references for cleanup on ejection
     (canvasContainerRef as any).current.cleanupHandler = () => {
       cancelAnimationFrame(animId);
+      clearInterval(telemFlushInterval);
+      flushTelemetry();
+      telemWs.close();
       inputManager.destroy();
       inputManagerRef.current = null;
       
@@ -757,7 +977,7 @@ export default function App() {
     victory: boolean,
     xpEarned: number,
     engine: GameEngine,
-    renderer3D: WorldRenderer
+    _renderer3D: WorldRenderer
   ) => {
     // Collect final accomplishments of human pilot
     const player = engine.pilots.find(p => p.id === "player");
@@ -775,8 +995,15 @@ export default function App() {
       }
     } catch (_) {}
 
-    setDebriefData({ victory, xpEarned, kills, structures });
+    setDebriefData({
+      victory,
+      xpEarned,
+      kills,
+      structures,
+      missionName: engine.campaignMission?.operation
+    });
     setShowDebrief(true);
+    setShowTacticalMap(false);
     setIsPlaying(false);
     setActiveEngine(null);
 
@@ -792,6 +1019,13 @@ export default function App() {
     const updated: UserProgression = {
       ...progression,
       totalXp: progression.totalXp + xpEarned,
+      completedCampaignMissions:
+        victory && engine.campaignMission
+          ? Array.from(new Set([
+              ...(progression.completedCampaignMissions ?? []),
+              engine.campaignMission.id
+            ]))
+          : progression.completedCampaignMissions,
       stats: updatedStats
     };
     saveProgression(updated);
@@ -812,6 +1046,7 @@ export default function App() {
       }
       setActiveEngine(null);
       setIsPlaying(false);
+      setShowTacticalMap(false);
       setIsPaused(false);
       isPausedRef.current = false;
     }
@@ -857,6 +1092,8 @@ export default function App() {
         <div id="active-hud-hud" className="absolute inset-0 z-20 pointer-events-none">
           <GameHUD
             playerPilot={playerPilotData}
+            pilots={hudSnapshot.pilots}
+            groundTargets={hudSnapshot.groundTargets}
             skyZones={hudSnapshot.zones}
             killFeed={hudSnapshot.killFeed}
             team1Score={hudSnapshot.team1Score}
@@ -879,9 +1116,13 @@ export default function App() {
             }}
             onExit={handleEject}
             cameraMode={cameraMode}
-            onToggleCameraMode={toggleCameraMode}
             inputFrame={inputManagerRef.current?.getInputFrame()}
             hitmarker={hitmarker}
+            bombSightInfo={hudSnapshot.bombSightInfo}
+            campaignState={hudSnapshot.campaignState}
+            mapId={activeEngine.selectedMapId}
+            showTacticalMap={showTacticalMap}
+            onCloseTacticalMap={() => setShowTacticalMap(false)}
           />
         </div>
       )}
@@ -1013,6 +1254,11 @@ export default function App() {
               Deployment Complete
             </h2>
             <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-1">Operational Debriefing Card</p>
+            {debriefData.missionName && (
+              <p className="mt-2 text-[9px] font-bold uppercase tracking-[0.18em] text-amber-400">
+                {debriefData.missionName}
+              </p>
+            )}
 
             <div className="text-[28px] font-black tracking-widest mt-5 uppercase">
               {debriefData.victory ? (

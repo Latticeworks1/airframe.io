@@ -12,10 +12,11 @@ import {
   InputFrame,
   AircraftSpecs,
   MatchMode,
-  GameMap,
   WeaponType,
   AmmoBelt,
-  KillEvent
+  KillEvent,
+  CampaignMissionDefinition,
+  CampaignMissionState
 } from "../types";
 import { DEFAULT_AIRCRAFT, WEAPON_SPECS_MAP } from "./aircraftData";
 import { FlightPhysicsEngine } from "./flightModel";
@@ -25,8 +26,9 @@ import { ProjectileSystem } from "./projectileSystem";
 import { BotAISystem } from "./botAISystem";
 import { GroundDefenseSystem } from "./groundDefenseSystem";
 import { ObjectiveSystem } from "./objectiveSystem";
-import { getTerrainHeight, getDeterministicIslands } from "./terrainModel";
-import { MAP_DEFINITIONS } from "./content/maps/mapDefinitions";
+import { getTerrainHeight, getTerrainLayout } from "./terrainModel";
+import { MAP_REGISTRY } from "./content/maps/registry";
+import { getCampaignMission } from "./content/campaign/campaignMissions";
 
 const BOT_NAMES = [
   "RedBaron_00",
@@ -93,23 +95,39 @@ export class GameEngine {
   public killFeed: KillEvent[] = [];
 
   public playerPilotId!: string;
-  public selectedMapId: GameMap;
+  public selectedMapId: string;
   public matchMode: MatchMode;
 
   public team1Score = 0;
   public team2Score = 0;
   public matchTimer = 360;
   public matchEnded = false;
+  private physicsAccumulator = 0;
 
   public xpEarnedThisMatch = 0;
   public targetsDestroyedThisMatch = 0;
+  public campaignMission: CampaignMissionDefinition | null = null;
+  public campaignState: CampaignMissionState | null = null;
+  public secondaryWeaponPreference: WeaponType | null = null;
 
   public isMultiplayer = false;
   public isHost = false;
   public onProjectileSpawn?: (type: WeaponType) => void;
+  public onProjectileImpact?: (
+    type: WeaponType,
+    position: Vector3,
+    ownerId: string
+  ) => void;
   public onGroundTargetDamage?: (targetId: string, hp: number, isDead: boolean) => void;
   public onLocalPlayerKill?: (killerId: string, victimId: string, weapon: string) => void;
   public onLocalPlayerHit?: (targetId: string, isGround: boolean) => void;
+  public onPlayerDamage?: (
+    shooterId: string,
+    targetId: string,
+    damage: number,
+    bulletType: string,
+    hitSpotLocal: Vector3
+  ) => void;
 
   private onKillCallback: (event: KillEvent) => void;
   private onGameOverCallback: (victory: boolean, xp: number) => void;
@@ -129,17 +147,30 @@ export class GameEngine {
     playerPlaneId: string,
     playerBelt: AmmoBelt,
     playerMods: string[],
-    mapId: GameMap,
+    mapId: string,
     mode: MatchMode,
     onKill: (event: KillEvent) => void,
     onGameOver: (victory: boolean, xp: number) => void,
     playerNickname?: string,
-    startOnGround: boolean = false
+    startOnGround: boolean = false,
+    campaignMissionId?: string | null
   ) {
     this.selectedMapId = mapId;
     this.matchMode = mode;
     this.onKillCallback = onKill;
     this.onGameOverCallback = onGameOver;
+    this.campaignMission = getCampaignMission(campaignMissionId);
+    if (this.campaignMission) {
+      this.matchTimer = this.campaignMission.timeLimitSeconds;
+      this.campaignState = {
+        missionId: this.campaignMission.id,
+        name: this.campaignMission.operation,
+        objectiveLabel: this.campaignMission.objectiveLabel,
+        progress: 0,
+        targetCount: this.campaignMission.targetCount,
+        completed: false
+      };
+    }
 
     this.initMatch(playerPlaneId, playerBelt, playerMods, playerNickname, startOnGround);
   }
@@ -168,14 +199,13 @@ export class GameEngine {
     let initialFlaps: "up" | "combat" | "landing" = "up";
 
     if (startOnGround) {
-      const mapDef = MAP_DEFINITIONS[this.selectedMapId];
-      if (mapDef && mapDef.layout.hasCarriers) {
-        // Spawn on Team 1 carrier deck: (-4000, 25.2, -3000), rotated Math.PI / 4
-        // To give full taxi/kickoff distance on the 400m deck, offset back by ~120m
-        const yaw = Math.PI / 4;
-        initialX = -4000 - Math.sin(yaw) * 120;
-        initialZ = -3000 - Math.cos(yaw) * 120;
-        initialY = 25.2; // Sits neatly on flight deck level (25m)
+      const mapDef = MAP_REGISTRY[this.selectedMapId];
+      const teamCarrier = mapDef?.layout.carriers[0];
+      if (teamCarrier) {
+        const yaw = teamCarrier.rotationY;
+        initialX = teamCarrier.x - Math.sin(yaw) * 120;
+        initialZ = teamCarrier.z - Math.cos(yaw) * 120;
+        initialY = teamCarrier.deckHeight;
         initialVx = 0;
         initialVy = 0;
         initialVz = 0;
@@ -184,15 +214,16 @@ export class GameEngine {
         initialGearDeployed = true; // Landing gear down
         initialFlaps = "combat"; // Takeoff/combat flaps for extra low-speed lift assist
       } else {
-        // Find if map has an airfield block (e.g. Alpine Valleys)
-        const islands = getDeterministicIslands(this.selectedMapId);
-        const airfield = islands.find((isl: any) => isl.isAirfield);
-        if (airfield) {
-          // Spawn at runway center back-offset (runway length is 900m)
-          const yaw = airfield.rotationY;
-          initialX = airfield.x - Math.sin(yaw) * 300;
-          initialZ = airfield.z - Math.cos(yaw) * 300;
-          initialY = airfield.scaleY + 10.2; // Top of airfield runway block + slight clearance for gear
+        const layout = mapDef ? getTerrainLayout(mapDef) : null;
+        const airfieldFeature = layout?.features.find(f => f.type === "airfield");
+        const airfieldBlock = airfieldFeature
+          ? layout!.blocks.find(b => b.id === airfieldFeature.parentBlockId)
+          : null;
+        if (airfieldBlock) {
+          const yaw = airfieldBlock.rotationY;
+          initialX = airfieldBlock.position[0] - Math.sin(yaw) * 300;
+          initialZ = airfieldBlock.position[2] - Math.cos(yaw) * 300;
+          initialY = airfieldBlock.scale[1] + 10.2;
           initialVx = 0;
           initialVy = 0;
           initialVz = 0;
@@ -246,9 +277,6 @@ export class GameEngine {
       smoothedPitch: 0,
       smoothedRoll: 0,
       smoothedYaw: 0,
-      pitchIntent: 0,
-      rollIntent: 0,
-      yawIntent: 0,
       elevatorDeflection: 0,
       aileronDeflection: 0,
       rudderDeflection: 0,
@@ -309,7 +337,7 @@ export class GameEngine {
   }
 
   private getAirSpawnPosition(team: 1 | 2): { x: number; y: number; z: number; vx: number; vy: number; vz: number } {
-    const mapDef = MAP_DEFINITIONS[this.selectedMapId];
+    const mapDef = MAP_REGISTRY[this.selectedMapId];
     const sp = mapDef?.spawn ?? { distMin: 3500, distMax: 4200, aglMin: 350, aglMax: 650, initialSpeedMs: 140, spreadZ: 600 };
     const dist = sp.distMin + Math.random() * (sp.distMax - sp.distMin);
     const sign = team === 1 ? -1 : 1;
@@ -361,9 +389,6 @@ export class GameEngine {
       smoothedPitch: 0,
       smoothedRoll: 0,
       smoothedYaw: 0,
-      pitchIntent: 0,
-      rollIntent: 0,
-      yawIntent: 0,
       elevatorDeflection: 0,
       aileronDeflection: 0,
       rudderDeflection: 0,
@@ -495,8 +520,6 @@ export class GameEngine {
   public update(dt: number, inputFrame: InputFrame, playerMouseTarget: Vector3 | null) {
     if (this.matchEnded) return;
 
-    dt = Math.min(dt, 0.05);
-
     this.matchTimer = Math.max(0, this.matchTimer - dt);
 
     if (this.matchTimer <= 0) {
@@ -504,61 +527,80 @@ export class GameEngine {
       return;
     }
 
-    this.tickPilotCooldowns(dt);
+    const fixedDt = 0.01; // 100Hz fixed physics step
+    this.physicsAccumulator += dt;
+    this.physicsAccumulator = Math.min(this.physicsAccumulator, 0.1); // Guard against "death spiral"
 
-    const player = this.pilots.find(p => p.id === "player") as EnginePilot | undefined;
+    while (this.physicsAccumulator >= fixedDt) {
+      this.tickPilotCooldowns(fixedDt);
 
-    if (player) {
-      if (player.damage.fuselage <= 0) {
-        this.updateDeadPilot(player, dt);
-      } else {
-        const controller = this.getOrCreateController(player.id);
-        const command = controller.update(player, inputFrame, playerMouseTarget, dt);
-        FlightPhysicsEngine.update(player, command, dt, this.selectedMapId);
-        this.enforceMapBoundary(player, dt);
-        this.handleWeaponFiring(player, command.primaryFire, command.secondaryFire, dt);
+      const player = this.pilots.find(p => p.id === "player") as EnginePilot | undefined;
+
+      if (player) {
+        if (player.damage.fuselage <= 0) {
+          this.updateDeadPilot(player, fixedDt);
+        } else {
+          const controller = this.getOrCreateController(player.id);
+          const command = controller.update(player, inputFrame, playerMouseTarget, fixedDt);
+          player.lastCommand = command;
+          FlightPhysicsEngine.update(player, command, fixedDt, this.selectedMapId);
+          this.enforceMapBoundary(player, fixedDt);
+          this.handleWeaponFiring(player, command.primaryFire, command.secondaryFire, fixedDt);
+        }
       }
+
+      this.pilots.forEach(p => {
+        if (p.id === "player") return;
+
+        const pilot = p as EnginePilot;
+
+        if (pilot.damage.fuselage <= 0) {
+          this.updateDeadPilot(pilot, fixedDt);
+        } else {
+          if (pilot.isBot) {
+            if (this.isMultiplayer && !this.isHost) {
+              // In multiplayer, remote non-host clients let the host synchronize bot positions
+              pilot.x += pilot.vx * fixedDt;
+              pilot.y += pilot.vy * fixedDt;
+              pilot.z += pilot.vz * fixedDt;
+              return;
+            }
+
+            this.runAIConsensus(pilot, fixedDt);
+
+            const botInput = createEmptyInputFrame();
+            const botTarget = pilot.aiState
+              ? new Vector3(
+                  pilot.aiState.destinationX,
+                  pilot.aiState.destinationY,
+                  pilot.aiState.destinationZ
+                )
+              : null;
+
+            const controller = this.getOrCreateController(pilot.id);
+            const command = controller.update(pilot, botInput, botTarget, fixedDt);
+            pilot.lastCommand = command;
+            FlightPhysicsEngine.update(pilot, command, fixedDt, this.selectedMapId);
+            this.enforceMapBoundary(pilot, fixedDt);
+          } else {
+            // Remote player linear extrapolation
+            pilot.x += pilot.vx * fixedDt;
+            pilot.y += pilot.vy * fixedDt;
+            pilot.z += pilot.vz * fixedDt;
+          }
+        }
+      });
+
+      this.updateProjectiles(fixedDt);
+      this.updateGroundDefense(fixedDt);
+      this.updateCaptureZones(fixedDt);
+
+      this.physicsAccumulator -= fixedDt;
     }
 
-    this.pilots.forEach(p => {
-      if (!p.isBot) return;
+    this.updateCampaignMission();
 
-      const bot = p as EnginePilot;
-
-      if (bot.damage.fuselage <= 0) {
-        this.updateDeadPilot(bot, dt);
-      } else {
-        if (this.isMultiplayer && !this.isHost) {
-          // In multiplayer, remote non-host clients let the host synchronize bot positions
-          bot.x += bot.vx * dt;
-          bot.y += bot.vy * dt;
-          bot.z += bot.vz * dt;
-          return;
-        }
-
-        this.runAIConsensus(bot, dt);
-
-        const botInput = createEmptyInputFrame();
-        const botTarget = bot.aiState
-          ? new Vector3(
-              bot.aiState.destinationX,
-              bot.aiState.destinationY,
-              bot.aiState.destinationZ
-            )
-          : null;
-
-        const controller = this.getOrCreateController(bot.id);
-        const command = controller.update(bot, botInput, botTarget, dt);
-        FlightPhysicsEngine.update(bot, command, dt, this.selectedMapId);
-        this.enforceMapBoundary(bot, dt);
-      }
-    });
-
-    this.updateProjectiles(dt);
-    this.updateGroundDefense(dt);
-    this.updateCaptureZones(dt);
-
-    if (this.team1Score >= 1000 || this.team2Score >= 1000) {
+    if (!this.campaignMission && (this.team1Score >= 1000 || this.team2Score >= 1000)) {
       this.endGame();
     }
   }
@@ -600,6 +642,18 @@ export class GameEngine {
 
     if (!ep.weaponCooldowns) ep.weaponCooldowns = {};
 
+    const usableSecondary = pilot.specs.weapons.find(wType => {
+      if (wType !== WeaponType.ROCKET && wType !== WeaponType.BOMB) return false;
+      if ((pilot.ammo[wType] ?? 0) <= 0) return false;
+      return this.secondaryWeaponPreference
+        ? wType === this.secondaryWeaponPreference
+        : true;
+    }) ?? pilot.specs.weapons.find(
+      wType =>
+        (wType === WeaponType.ROCKET || wType === WeaponType.BOMB) &&
+        (pilot.ammo[wType] ?? 0) > 0
+    );
+
     pilot.specs.weapons.forEach(wType => {
       const spec = WEAPON_SPECS_MAP[wType];
       const ammo = pilot.ammo[wType] ?? 0;
@@ -613,6 +667,7 @@ export class GameEngine {
 
       if (isSecondary) {
         if (!triggerSecondary) return;
+        if (wType !== usableSecondary) return;
 
         this.spawnProjectile(pilot, wType);
         pilot.ammo[wType]--;
@@ -642,11 +697,18 @@ export class GameEngine {
       this.projectiles,
       this.pilots,
       this.groundTargets,
+      this.selectedMapId,
       {
         registerKill: (k, v, w) => this.registerKill(k, v, w),
         registerGroundTargetKill: (k, t) => this.registerGroundTargetKill(k, t),
         onProjectileSpawn: this.onProjectileSpawn,
+        onProjectileImpact: this.onProjectileImpact,
         onGroundTargetDamage: this.onGroundTargetDamage,
+        onPlayerDamage: (k, t, d, b, s) => {
+          if (this.onPlayerDamage) {
+            this.onPlayerDamage(k, t, d, b, s);
+          }
+        },
         onHitEnemy: (k, t, isGround) => {
           if (k === "player" && this.onLocalPlayerHit) {
             this.onLocalPlayerHit(t, isGround);
@@ -677,12 +739,9 @@ export class GameEngine {
 
     victim.deaths++;
 
-    let killMsg = `${victim.name} crashed`;
-
     if (killer) {
       killer.kills++;
       killer.score += 300;
-      killMsg = `${killer.name} downed ${victim.name} with ${weapon}`;
 
       if (killerId === "player") {
         this.xpEarnedThisMatch += 150 + (weapon === WeaponType.ROCKET ? 100 : 0);
@@ -744,12 +803,25 @@ export class GameEngine {
   }
 
   private enforceMapBoundary(pilot: Pilot, dt: number) {
-    const mapRadius = MAP_DEFINITIONS[this.selectedMapId]?.world?.radius ?? 6000;
+    const mapRadius = MAP_REGISTRY[this.selectedMapId]?.world?.radius ?? 6000;
     const dist = Math.sqrt(pilot.x * pilot.x + pilot.z * pilot.z);
     if (dist > mapRadius) {
-      const scale = Math.max(80, Math.sqrt(pilot.vx ** 2 + pilot.vy ** 2 + pilot.vz ** 2)) * 2 * dt;
-      pilot.vx += (-pilot.x / dist) * scale;
-      pilot.vz += (-pilot.z / dist) * scale;
+      const horizontalSpeed = Math.hypot(pilot.vx, pilot.vz);
+      if (horizontalSpeed > 1e-6) {
+        const targetVx = (-pilot.x / dist) * horizontalSpeed;
+        const targetVz = (-pilot.z / dist) * horizontalSpeed;
+        const steer = Math.min(1, dt * 2);
+        pilot.vx += (targetVx - pilot.vx) * steer;
+        pilot.vz += (targetVz - pilot.vz) * steer;
+
+        // Lerp can slightly shrink a vector but must never add kinetic energy.
+        const steeredSpeed = Math.hypot(pilot.vx, pilot.vz);
+        if (steeredSpeed > horizontalSpeed) {
+          const correction = horizontalSpeed / steeredSpeed;
+          pilot.vx *= correction;
+          pilot.vz *= correction;
+        }
+      }
     }
   }
 
@@ -772,20 +844,29 @@ export class GameEngine {
     pilot.pitch = 0;
     pilot.roll = 0;
     pilot.yaw = getSpawnYaw(pilot.team);
+    pilot.avx = 0;
+    pilot.avy = 0;
+    pilot.avz = 0;
+    pilot.isStalling = false;
+    pilot.stallSeverity = 0;
+    pilot.physicsDebug = undefined;
     pilot.throttle = 0.8;
     pilot.engineTemperature = 75;
     pilot.smoothedPitch = 0;
     pilot.smoothedRoll = 0;
     pilot.smoothedYaw = 0;
-    pilot.pitchIntent = 0;
-    pilot.rollIntent = 0;
-    pilot.yawIntent = 0;
     pilot.elevatorDeflection = 0;
     pilot.aileronDeflection = 0;
     pilot.rudderDeflection = 0;
+    pilot.lastCommand = undefined;
     pilot.flaps = "up";
     pilot.gearDeployed = false;
     pilot.airbrakeDeployed = false;
+
+    // A controller carries blend and toggle state between frames. A new life must
+    // start with a new controller so no manual override or trim-like state leaks
+    // through the respawn boundary.
+    this.controllers.delete(pilot.id);
   }
 
   private runAIConsensus(bot: Pilot, dt: number) {
@@ -827,9 +908,34 @@ export class GameEngine {
     this.team2Score = Math.floor(this.team2Score);
   }
 
-  private endGame() {
+  private updateCampaignMission() {
+    if (!this.campaignMission || !this.campaignState || this.matchEnded) return;
+
+    const player = this.pilots.find(p => p.id === this.playerPilotId);
+    const progress =
+      this.campaignMission.objectiveType === "destroy-ground"
+        ? this.targetsDestroyedThisMatch
+        : player?.kills ?? 0;
+
+    this.campaignState.progress = Math.min(
+      progress,
+      this.campaignMission.targetCount
+    );
+
+    if (this.campaignState.progress >= this.campaignMission.targetCount) {
+      this.campaignState.completed = true;
+      this.xpEarnedThisMatch += this.campaignMission.xpReward;
+      this.endGame(true);
+    }
+  }
+
+  private endGame(victoryOverride?: boolean) {
     this.matchEnded = true;
-    const playerWon = this.team1Score >= this.team2Score;
+    const playerWon = victoryOverride ?? (
+      this.campaignMission
+        ? this.campaignState?.completed === true
+        : this.team1Score >= this.team2Score
+    );
 
     if (playerWon) {
       this.xpEarnedThisMatch += 400;
