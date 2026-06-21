@@ -8,3 +8,6 @@ coverage/
 !.env.example
 telemetry.jsonl
 saves/
+__pycache__/
+*.pyc
+.claude/
