@@ -99,33 +99,45 @@ export class BotAISystem {
         const tPos = new Vector3(target.x, target.y, target.z);
         const tVel = new Vector3(target.vx, target.vy, target.vz);
         const dist = botPos.distanceTo(tPos);
-
-        const bulletSpeed = 800;
-        const timeToTgt = dist / bulletSpeed;
-        const leadTargetPos = tPos.clone().addScaledVector(tVel, timeToTgt);
-
-        // Enforce a terrain floor — bots must not dive into the ground chasing.
-        const safeLeadY = Math.max(leadTargetPos.y, 180);
-        bot.aiState.destinationX = leadTargetPos.x;
-        bot.aiState.destinationY = bot.y < 150 ? Math.max(safeLeadY, bot.y + 200) : safeLeadY;
-        bot.aiState.destinationZ = leadTargetPos.z;
-
-        const bearingAngle = leadTargetPos.clone().sub(botPos).normalize();
         const localForward = getForwardVector(bot);
-        const aimDot = bearingAngle.dot(localForward);
 
-        // Keep speed high enough to pursue across large map distances.
-        // Only bleed throttle when very close and already lined up.
-        if (dist > 1200) {
-          bot.throttle = Math.min(1.0, bot.throttle + dt * 0.5);
-        } else if (aimDot < 0.85) {
-          bot.throttle = Math.max(0.65, bot.throttle - dt * 0.3);
+        // Check if the target is behind the bot (being pursued) — trigger evasion break.
+        const toTarget = tPos.clone().sub(botPos).normalize();
+        const targetOnTail = toTarget.dot(localForward) < -0.5 && dist < 800;
+
+        if (targetOnTail) {
+          // Break turn: juke perpendicular + climb to escape the firing cone.
+          const t = Date.now() / 1000;
+          const juke = Math.sin(t * 3.7) * 600;
+          bot.aiState.destinationX = bot.x + localForward.z * juke;
+          bot.aiState.destinationY = Math.max(250, bot.y + 400);
+          bot.aiState.destinationZ = bot.z - localForward.x * juke;
+          bot.throttle = Math.min(1.0, bot.throttle + dt * 0.8);
         } else {
-          bot.throttle = Math.min(1.0, bot.throttle + dt * 0.4);
-        }
+          const bulletSpeed = 820;
+          const timeToTgt = dist / bulletSpeed;
+          const leadTargetPos = tPos.clone().addScaledVector(tVel, timeToTgt);
 
-        if (aimDot > 0.93 && dist < 1200) {
-          handleWeaponFiring(bot, true, false, dt);
+          // Terrain floor — bots must not dive into the ground chasing.
+          const safeLeadY = Math.max(leadTargetPos.y, 180);
+          bot.aiState.destinationX = leadTargetPos.x;
+          bot.aiState.destinationY = bot.y < 150 ? Math.max(safeLeadY, bot.y + 200) : safeLeadY;
+          bot.aiState.destinationZ = leadTargetPos.z;
+
+          const bearingAngle = leadTargetPos.clone().sub(botPos).normalize();
+          const aimDot = bearingAngle.dot(localForward);
+
+          if (dist > 1200) {
+            bot.throttle = Math.min(1.0, bot.throttle + dt * 0.5);
+          } else if (aimDot < 0.85) {
+            bot.throttle = Math.max(0.65, bot.throttle - dt * 0.3);
+          } else {
+            bot.throttle = Math.min(1.0, bot.throttle + dt * 0.4);
+          }
+
+          if (aimDot > 0.93 && dist < 1200) {
+            handleWeaponFiring(bot, true, false, dt);
+          }
         }
       } else {
         bot.aiState.behavior = "patrol";

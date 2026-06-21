@@ -290,8 +290,8 @@ export class GameEngine {
     this.pilots.push(playerPilot);
     this.playerPilotId = "player";
 
-    let adversaryCount = 5;
-    let teammateCount = 4;
+    let adversaryCount = 7;
+    let teammateCount = 6;
 
     if (this.matchMode === MatchMode.DuelArena) {
       adversaryCount = 1;

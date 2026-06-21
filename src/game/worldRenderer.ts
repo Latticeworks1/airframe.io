@@ -306,7 +306,7 @@ export class WorldRenderer {
     {
       const skirtSize = world.radius * 12;
       const fogColor = new THREE.Color(this.mapDef.atmosphere.fogColor);
-      const skirtMat = new THREE.MeshBasicMaterial({ color: fogColor, fog: false });
+      const skirtMat = new THREE.MeshBasicMaterial({ color: fogColor, fog: false, depthWrite: false });
       const skirtMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(skirtSize, skirtSize),
         skirtMat
@@ -1076,7 +1076,7 @@ export class WorldRenderer {
     // Kicks in above 450 km/h and peaks near VNE.
     this.cameraShakeTime += dt;
     const shakeKmph = new THREE.Vector3(playerPilot.vx, playerPilot.vy, playerPilot.vz).length() * 3.6;
-    const shakeStrength = THREE.MathUtils.clamp((shakeKmph - 450) / 200, 0, 1) * 0.28;
+    const shakeStrength = THREE.MathUtils.clamp((shakeKmph - 500) / 250, 0, 1) * 0.10;
     if (shakeStrength > 0) {
       const t = this.cameraShakeTime;
       this.camera.position.x += Math.sin(t * 18.7) * Math.sin(t * 6.3) * shakeStrength;
