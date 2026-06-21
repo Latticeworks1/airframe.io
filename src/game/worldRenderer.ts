@@ -286,22 +286,18 @@ export class WorldRenderer {
     const landMat = new THREE.MeshLambertMaterial({ flatShading: true });
     this.groundMaterial = landMat;
 
-    // Water surface — sits just above terrain in water areas via polygonOffset
-    // so it never z-fights with the underlying terrain mesh.
+    // Water surface at waterHeight + 0.3 so it floats just above ocean-floor
+    // heightmap vertices without any polygonOffset — negative offsets push the
+    // plane forward in the depth buffer, which causes it to overdraw shoreline land.
     {
       const waterColor = new THREE.Color(this.mapDef.palette.colors[0] ?? "#0369a1");
-      const waterMat = new THREE.MeshBasicMaterial({
-        color: waterColor,
-        polygonOffset: true,
-        polygonOffsetFactor: -2,
-        polygonOffsetUnits: -2,
-      });
+      const waterMat = new THREE.MeshBasicMaterial({ color: waterColor });
       const waterMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(world.radius * 2, world.radius * 2),
         waterMat
       );
       waterMesh.rotation.x = -Math.PI / 2;
-      waterMesh.position.y = world.waterHeight;
+      waterMesh.position.y = world.waterHeight + 0.3;
       this.scene.add(waterMesh);
     }
 
@@ -333,9 +329,12 @@ export class WorldRenderer {
       try {
         const hd = await loadHeightmap(def.path, world.radius, def.elevationScale);
         const pos = planeGeo.attributes.position as THREE.BufferAttribute;
+        const wh = world.waterHeight;
         for (let i = 0; i < pos.count; i++) {
           const x = pos.getX(i), z = pos.getZ(i);
-          pos.setY(i, sampleHeightmapAt(hd, x, z));
+          const h = sampleHeightmapAt(hd, x, z);
+          // Clamp sub-water vertices down so ocean floor never intersects the water plane.
+          pos.setY(i, h < wh ? Math.min(h, wh - 1.5) : h);
         }
         pos.needsUpdate = true;
         planeGeo.computeVertexNormals();
@@ -736,7 +735,7 @@ export class WorldRenderer {
           const dz = p.z - playerPilot.z;
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
           
-          if (dist > 50 && dist < 2200) {
+          if (dist > 50 && dist < (playerPilot.specs.radarRange ?? 4500)) {
             const dir = new THREE.Vector3(dx, dy, dz).normalize();
             const dot = forward.dot(dir);
             if (dot > bestDot) {

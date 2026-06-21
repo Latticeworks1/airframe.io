@@ -47,7 +47,7 @@ export class BotAISystem {
       if (health < 0.45 && bot.aiState.behavior !== "rtb") {
         bot.aiState.behavior = "rtb";
         bot.aiState.destinationX = bot.team === 1 ? -4000 : 4000;
-        bot.aiState.destinationY = 15;
+        bot.aiState.destinationY = 280;
         bot.aiState.destinationZ = bot.team === 1 ? -3000 : 3000;
         return;
       }
@@ -80,7 +80,7 @@ export class BotAISystem {
           }
         });
 
-        if (closest && minDist < 1500) {
+        if (closest && minDist < 8000) {
           bot.aiState.behavior = "dogfight";
           bot.aiState.targetId = closest.id;
         } else {
@@ -104,21 +104,27 @@ export class BotAISystem {
         const timeToTgt = dist / bulletSpeed;
         const leadTargetPos = tPos.clone().addScaledVector(tVel, timeToTgt);
 
+        // Enforce a terrain floor — bots must not dive into the ground chasing.
+        const safeLeadY = Math.max(leadTargetPos.y, 180);
         bot.aiState.destinationX = leadTargetPos.x;
-        bot.aiState.destinationY = leadTargetPos.y;
+        bot.aiState.destinationY = bot.y < 150 ? Math.max(safeLeadY, bot.y + 200) : safeLeadY;
         bot.aiState.destinationZ = leadTargetPos.z;
 
         const bearingAngle = leadTargetPos.clone().sub(botPos).normalize();
         const localForward = getForwardVector(bot);
         const aimDot = bearingAngle.dot(localForward);
 
-        if (aimDot < 0.85) {
-          bot.throttle = Math.max(0.4, bot.throttle - dt * 0.5);
+        // Keep speed high enough to pursue across large map distances.
+        // Only bleed throttle when very close and already lined up.
+        if (dist > 1200) {
+          bot.throttle = Math.min(1.0, bot.throttle + dt * 0.5);
+        } else if (aimDot < 0.85) {
+          bot.throttle = Math.max(0.65, bot.throttle - dt * 0.3);
         } else {
           bot.throttle = Math.min(1.0, bot.throttle + dt * 0.4);
         }
 
-        if (aimDot > 0.96 && dist < 850) {
+        if (aimDot > 0.93 && dist < 1200) {
           handleWeaponFiring(bot, true, false, dt);
         }
       } else {

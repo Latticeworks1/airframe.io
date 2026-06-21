@@ -43,6 +43,7 @@ export interface AircraftSpecs {
   pitchRateDegPerSec?: number;
   rollRateDegPerSec?: number;
   yawRateDegPerSec?: number;
+  radarRange?: number;        // lead-indicator lock range in world units (default 4500)
   color: string;
   secondaryColor: string;
   accentColor: string;
