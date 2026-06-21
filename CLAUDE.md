@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working methodology
+
+When a task or design question is unclear, do not guess and implement — ask. Before asking the actual question, first derive the meta-questions that lead to its answer: the smaller, more concrete questions whose answers collectively resolve the larger one. Stating those meta-questions out loud narrows the design space and often makes the answer obvious without needing to ask the user at all. If it does not, ask only the residual questions that the meta-questions could not resolve. This process applies to architecture decisions, visual/UX intent, scope boundaries, and any situation where a wrong assumption would require rework.
+
 ## Commands
 
 ```

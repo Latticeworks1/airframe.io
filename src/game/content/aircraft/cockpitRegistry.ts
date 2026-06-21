@@ -2,11 +2,11 @@ import type { CockpitDef } from "../../cockpitMesh";
 
 const COCKPIT_DEFS = new Map<string, CockpitDef>([
   ["falcon-mk2", {
-    eye:    [0, 1.28, 0.80],
+    eye:    [0, 1.42, 0.95],
     panelZ: 1.75,
-    panelY: 0.98,
-    panelW: 0.72,
-    panelH: 0.50,
+    panelY: 1.08,
+    panelW: 0.86,
+    panelH: 0.52,
   }],
 ]);
 
