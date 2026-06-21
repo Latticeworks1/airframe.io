@@ -61,6 +61,7 @@ export class WorldRenderer {
   public renderer!: WebGPURenderer;
   private container!: HTMLDivElement;
 
+  private cockpitLight: THREE.PointLight | null = null;
   private aircraftGroupMap = new Map<string, THREE.Group>();
   private voxelStateMap = new Map<string, VoxelMeshState>();
   private cloudField: CloudField | null = null;
@@ -1069,15 +1070,20 @@ export class WorldRenderer {
     if (isFreeLookActive && inputFrame) {
       this.freeLookYaw += inputFrame.mouseDelta.x * 2.8;
       this.freeLookPitch -= inputFrame.mouseDelta.y * 2.1;
-      // Clamp pitch to avoid inversion
       this.freeLookPitch = THREE.MathUtils.clamp(this.freeLookPitch, -Math.PI / 2.2, Math.PI / 2.2);
-    } else {
-      // Smoothly slide back to front-facing zero angles
+      // In FPV, clamp yaw so you can't look more than ~130° off nose
+      if (this.cameraMode === "first-person") {
+        this.freeLookYaw = THREE.MathUtils.clamp(this.freeLookYaw, -Math.PI * 0.72, Math.PI * 0.72);
+      }
+    } else if (this.cameraMode !== "first-person") {
+      // Third-person springs back to forward; FPV holds the look angle so
+      // you can glance around the cockpit and let go without losing the view.
       this.freeLookYaw += (0 - this.freeLookYaw) * dt * 8.0;
       this.freeLookPitch += (0 - this.freeLookPitch) * dt * 8.0;
     }
 
     if (this.cameraMode === "bombsight") {
+      if (this.cockpitLight?.parent) this.scene.remove(this.cockpitLight);
       pGroup.visible = false;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, false);
 
@@ -1102,12 +1108,16 @@ export class WorldRenderer {
         .multiply(mountQuaternion)
         .normalize();
     } else if (this.cameraMode === "first-person") {
-      // Hide the entire aircraft group in first-person: the exterior voxel shell
-      // has no interior lighting and would appear as unlit black silhouettes.
-      // The cockpit frame, dashboard, and canopy are handled by the 2D CockpitOverlay
-      // in GameHUD, so no 3D interior geometry is needed here.
-      pGroup.visible = false;
+      pGroup.visible = true;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, true);
+
+      // Interior point light: illuminates cockpit voxel cells from inside so
+      // MeshLambertMaterial back-faces are lit rather than appearing black.
+      if (!this.cockpitLight) {
+        this.cockpitLight = new THREE.PointLight(0xffc87a, 3.2, 7);
+        this.cockpitLight.castShadow = false;
+      }
+      if (!this.cockpitLight.parent) this.scene.add(this.cockpitLight);
 
       const localCockpitEye = new THREE.Vector3(
         ...(cameraDef?.cockpitEye ?? [0, 1.15, 1.6])
@@ -1117,7 +1127,8 @@ export class WorldRenderer {
         .add(pGroup.position);
       
       this.camera.position.copy(cockpitPosition);
-      
+      this.cockpitLight.position.copy(cockpitPosition);
+
       // Calculate looking vector with free look rotation applied on local aircraft coordinate frames
       const localRigidRot = pGroup.quaternion.clone();
       const freeLookRot = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.freeLookPitch, this.freeLookYaw, 0, "YXZ"));
@@ -1130,6 +1141,7 @@ export class WorldRenderer {
       this.camera.up.copy(rotatedUp);
       this.camera.lookAt(lookTarget);
     } else {
+      if (this.cockpitLight?.parent) this.scene.remove(this.cockpitLight);
       pGroup.visible = true;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, false);
 
