@@ -20,7 +20,7 @@ export const render: AircraftRenderDef = {
       kind: "box",
       role: "fuselage",
       position: [0, 0, 0],
-      scale: [1.7, 1.6, 10],
+      scale: [1.7, 1.4, 10],
       material: "primary",
       damageComponent: "fuselage"
     },

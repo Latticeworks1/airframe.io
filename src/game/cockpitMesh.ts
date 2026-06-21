@@ -145,7 +145,7 @@ export function buildCockpitMesh(def: CockpitDef): CockpitState {
     ctx.fillRect(0, 0, CW, CH);
 
     // UV y=0 is canvas bottom → canvas_y = CH*(1-uv_y)
-    const lr = CW * 0.122 * 0.75;
+    const lr = CW * 0.122 * 0.5625;
 
     // Left column: IAS, altitude, compass heading
     drawGauge(ctx, CW * 0.14, CH * (1 - 0.74), lr,        _speed01,   true);
@@ -153,12 +153,12 @@ export function buildCockpitMesh(def: CockpitDef): CockpitState {
     drawGauge(ctx, CW * 0.14, CH * (1 - 0.16), lr * 0.78, _heading01, true);
 
     // Center: attitude (static), lower heading
-    const cr = CW * 0.178 * 0.75;
+    const cr = CW * 0.178 * 0.5625;
     drawGauge(ctx, CW * 0.50, CH * (1 - 0.60), cr,        0.5,        false);
     drawGauge(ctx, CW * 0.50, CH * (1 - 0.20), lr,        _heading01, true);
 
     // Right column: throttle, EGT, oil
-    const rr = CW * 0.112 * 0.75;
+    const rr = CW * 0.112 * 0.5625;
     drawGauge(ctx, CW * 0.86, CH * (1 - 0.72), rr,        Math.min(_throttle01 / 1.1, 1.0), true);
     drawGauge(ctx, CW * 0.86, CH * (1 - 0.44), rr * 0.88, 0.68, false);
     drawGauge(ctx, CW * 0.86, CH * (1 - 0.18), rr * 0.80, 0.52, false);
@@ -273,7 +273,7 @@ export function buildCockpitMesh(def: CockpitDef): CockpitState {
   // ── Cockpit interior tub (floor, side walls, rear bulkhead) ──────────────
   const cabLen = def.panelZ - (eyeZ - 0.40);
   const cabCenterZ = (def.panelZ + (eyeZ - 0.40)) / 2;
-  const floorOffset = 0.60;
+  const floorOffset = 0.72;
   const floorY = eyeY - floorOffset;
   const wallH = pBotY - floorY;
   const wallY = (floorY + pBotY) / 2;
@@ -337,7 +337,7 @@ export function buildCockpitMesh(def: CockpitDef): CockpitState {
   // ── Control stick ─────────────────────────────────────────────────────────
   const stickZ = eyeZ + 0.26;
   const stickH = 0.22;
-  const stickBaseY = eyeY - 0.46;
+  const stickBaseY = eyeY - (floorOffset - 0.14);
   // Metal rod lever
   gsGeos.push(coloredBoxGeo(0.020, stickH, 0.020, 0, stickBaseY + stickH / 2, stickZ, cRod));
   // Grip handle

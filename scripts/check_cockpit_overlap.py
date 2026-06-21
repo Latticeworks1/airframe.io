@@ -194,7 +194,7 @@ def run_validation():
     gauges = {}
 
     # Left Column: IAS, Alt, Compass
-    lr = 0.122 * PW * 0.75
+    lr = 0.122 * PW * 0.5625
     gauges["IAS"] = {
         "type": "circle",
         "cx": -PW / 2 + 0.14 * PW,
@@ -215,7 +215,7 @@ def run_validation():
     }
 
     # Center: Attitude, Lower Heading
-    cr = 0.178 * PW * 0.75
+    cr = 0.178 * PW * 0.5625
     gauges["Attitude Indicator"] = {
         "type": "circle",
         "cx": 0.0,
@@ -230,7 +230,7 @@ def run_validation():
     }
 
     # Right Column: Throttle, EGT, Oil
-    rr = 0.112 * PW * 0.75
+    rr = 0.112 * PW * 0.5625
     gauges["Throttle Gauge"] = {
         "type": "circle",
         "cx": -PW / 2 + 0.86 * PW,
