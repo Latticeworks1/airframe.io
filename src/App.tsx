@@ -154,7 +154,7 @@ export default function App() {
   const setActiveCameraMode = (next: CameraMode) => {
     cameraModeRef.current = next;
     setCameraMode(next);
-    renderer3DRef.current?.setCameraMode(next);
+    renderer3DRef.current?.setCameraMode(next, playerRef.current?.id);
   };
 
   const toggleCameraMode = () => {
@@ -397,7 +397,7 @@ export default function App() {
       console.log("WebGL World initialized successfully.");
     });
     renderer3DRef.current = renderer3D;
-    renderer3D.setCameraMode(cameraModeRef.current);
+    renderer3D.setCameraMode(cameraModeRef.current, playerRef.current?.id);
 
     // 2. Initialize Game Rules Engine
     const engine = new GameEngine(
@@ -1013,9 +1013,10 @@ export default function App() {
         if (fpsElement) {
           const fps = fpsFrameCount * 1000 / fpsElapsed;
           const frameMs = fps > 0 ? 1000 / fps : 0;
-          const { drawCalls } = renderer3D.getRenderStats();
+          const { drawCalls, triangles } = renderer3D.getRenderStats();
+          const trisK = (triangles / 1000).toFixed(1);
           fpsElement.textContent =
-            `${Math.round(fps)} FPS · ${frameMs.toFixed(1)} MS · ${drawCalls} DC`;
+            `${Math.round(fps)} FPS · ${frameMs.toFixed(1)} MS · ${drawCalls} DC · ${trisK}K TRI`;
           fpsElement.dataset.level = fps >= 55 ? "good" : fps >= 35 ? "warn" : "bad";
         }
         fpsWindowStart = now;
