@@ -216,9 +216,14 @@ export class CloudField {
     const seedArray = new Float32Array(clusterCount);
     const densityArray = new Float32Array(clusterCount);
 
+    const worldRadius = def.world.radius;
     for (let index = 0; index < clusterCount; index++) {
       const angle = random() * Math.PI * 2;
-      const distance = 900 + Math.sqrt(random()) * 6100;
+      // Distribute clusters across the full world radius so clouds aren't
+      // all piled at the map centre when the radius is large (e.g. 32 000 m).
+      const minDist = worldRadius * 0.04;
+      const maxDist = worldRadius * 0.88;
+      const distance = minDist + Math.sqrt(random()) * (maxDist - minDist);
       const center = new THREE.Vector3(
         Math.cos(angle) * distance,
         THREE.MathUtils.lerp(
