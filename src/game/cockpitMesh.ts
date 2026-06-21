@@ -102,7 +102,8 @@ vec3 gauge(vec2 uv, vec2 c, float r, float value, bool live) {
 }
 
 void main() {
-  // rotation.y=PI on mesh mirrors UV.x — undo that so layout matches authoring coords
+  // BackSide rendering: UV.x is mirrored relative to the pilot's left/right.
+  // Flip x so gauge layout matches authoring (left column on pilot's left).
   vec2 uv = vec2(1.0 - vUv.x, vUv.y);
 
   vec3 col = BG;
@@ -195,15 +196,17 @@ export function buildCockpitMesh(def: CockpitDef): CockpitState {
     uHeading:  { value: 0.0 },
     uThrottle: { value: 0.0 },
   };
+  // BackSide renders the face pointing toward -Z (pilot direction) without
+  // any mesh rotation. rotation.y=PI would reverse winding order and cull the
+  // face with FrontSide. The UV x-flip in the shader corrects the mirror.
   const panelMat = new THREE.ShaderMaterial({
     vertexShader:   PANEL_VERT,
     fragmentShader: PANEL_FRAG,
     uniforms:       panelUniforms,
-    side:           THREE.FrontSide,
+    side:           THREE.BackSide,
   });
   const panelGeo = new THREE.PlaneGeometry(PW, PH);
   const panelMesh = new THREE.Mesh(panelGeo, panelMat);
-  panelMesh.rotation.y = Math.PI;  // face toward -Z (toward pilot)
   panelMesh.position.set(0, def.panelY, def.panelZ);
   group.add(panelMesh);
 
@@ -263,6 +266,29 @@ export function buildCockpitMesh(def: CockpitDef): CockpitState {
     gsGeos.push(boxGeo(0.018, 0.014, railLen,
       side * (PW / 2 + 0.02), pBotY, railZ));
   }
+
+  // ── Cockpit sidewalls and floor ───────────────────────────────────────────
+  // These exist below the canopy sill (pBotY) so the pilot doesn't see through
+  // the fuselage sides in FPV. Above the sill, the A-pillars + open glass handle
+  // the view. Wall depth spans from rear arch to instrument panel face.
+  const sillY  = pBotY;               // y = eyeY - 0.15
+  const floorY = eyeY - 0.50;         // cockpit floor
+  const wallH  = sillY - floorY;      // wall height below sill
+  const wallZMid  = (pBotZ - 0.15 + def.panelZ) / 2;
+  const wallZSpan = def.panelZ - (pBotZ - 0.15);
+
+  // Left sidewall panel
+  gsGeos.push(boxGeo(0.018, wallH, wallZSpan,
+    -(PW / 2 + 0.06), floorY + wallH / 2, wallZMid));
+  // Right sidewall panel
+  gsGeos.push(boxGeo(0.018, wallH, wallZSpan,
+    PW / 2 + 0.06, floorY + wallH / 2, wallZMid));
+  // Floor panel
+  gsGeos.push(boxGeo(PW * 1.2, 0.018, wallZSpan,
+    0, floorY, wallZMid));
+  // Rear bulkhead (behind pilot seat)
+  gsGeos.push(boxGeo(PW * 1.2, wallH, 0.018,
+    0, floorY + wallH / 2, pBotZ - 0.18));
 
   // ── Control stick ─────────────────────────────────────────────────────────
   const stickZ = eyeZ + 0.26;
