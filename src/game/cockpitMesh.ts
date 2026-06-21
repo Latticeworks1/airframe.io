@@ -35,131 +35,133 @@ const PANEL_FRAG = /* glsl */ `
 precision mediump float;
 varying vec2 vUv;
 
-uniform float uAspect;   // panelW / panelH
-uniform float uSpeed;    // 0-1
-uniform float uAlt;      // 0-1
-uniform float uHeading;  // 0-1 (0=N, clockwise)
-uniform float uThrottle; // 0-1.1
+uniform float uAspect;
+uniform float uSpeed;
+uniform float uAlt;
+uniform float uHeading;
+uniform float uThrottle;
 
 const float PI = 3.14159265;
 
-const vec3 BG     = vec3(0.055, 0.090, 0.145);
-const vec3 BEZEL  = vec3(0.200, 0.310, 0.460);
-const vec3 GLASS  = vec3(0.018, 0.040, 0.065);
-const vec3 TICK   = vec3(0.280, 0.460, 0.640);
+const vec3 BG     = vec3(0.070, 0.110, 0.180);
+const vec3 BEZEL  = vec3(0.260, 0.400, 0.560);
+const vec3 GLASS  = vec3(0.025, 0.055, 0.090);
+const vec3 TICK   = vec3(0.420, 0.640, 0.860);
 const vec3 NEEDLE = vec3(0.980, 0.890, 0.680);
-const vec3 HUB    = vec3(0.500, 0.650, 0.800);
+const vec3 HUB    = vec3(0.560, 0.720, 0.900);
 const vec3 MFD    = vec3(0.010, 0.030, 0.040);
-const vec3 WARN   = vec3(0.220, 0.050, 0.040);
-const vec3 WARN2  = vec3(0.030, 0.150, 0.060);
+const vec3 WARN   = vec3(0.260, 0.060, 0.040);
+const vec3 WARN2  = vec3(0.040, 0.180, 0.060);
 
-// Aspect-corrected distance from uv to center c
-float dist(vec2 uv, vec2 c) {
+float adist(vec2 uv, vec2 c) {
   return length(vec2((uv.x - c.x) * uAspect, uv.y - c.y));
 }
 
-// Draw one analog gauge. value in [0,1], sweeps 270° from bottom-left to bottom-right.
+// 270-degree analog gauge. All smoothstep calls satisfy edge0 < edge1.
 vec3 gauge(vec2 uv, vec2 c, float r, float value, bool live) {
-  float d = dist(uv, c);
-  float bezelW = r * 0.13;
+  float d = adist(uv, c);
+  float bezelW = r * 0.14;
 
-  if (d > r + bezelW) return BG;
-
-  // Bezel ring
-  if (d > r - bezelW * 0.2) {
-    float hi = smoothstep(r + bezelW, r + bezelW * 0.6, d);
-    return mix(BG, BEZEL, hi);
-  }
-
+  // Start with glass face
   vec3 col = GLASS;
 
-  // Tick marks: 36 divisions, major every 3rd
+  // Aspect-distorted offset vector for angle/tick/needle work
   vec2 dc = vec2((uv.x - c.x) * uAspect, uv.y - c.y);
-  float angle = atan(dc.x, dc.y);  // 0 at top, clockwise
-  float normA = mod(angle / (2.0 * PI) + 1.5, 1.0);
-  float tickDiv = 1.0 / 36.0;
-  float nearT = mod(normA + tickDiv * 0.5, tickDiv);
-  bool major = nearT < tickDiv * 0.12;
-  bool minor = nearT < tickDiv * 0.06;
-  float inTickZone = step(r * 0.70, d) * step(d, r * 0.92);
-  if (major && inTickZone > 0.0)  col = mix(col, TICK, 0.90);
-  else if (minor && inTickZone > 0.0) col = mix(col, TICK, 0.55);
 
-  // Needle: 270° sweep starting from ~bottom-left (-135°), clockwise
+  // Tick ring — 36 minor divisions, every 3rd is major
+  float angle = atan(dc.x, dc.y);
+  float normA = mod(angle / (2.0 * PI) + 1.5, 1.0);
+  float idx36 = normA * 36.0;
+  float frac36 = fract(idx36);
+  bool nearTick = frac36 < 0.18 || frac36 > 0.82;
+  bool isMajor = mod(floor(idx36 + 0.5), 3.0) < 0.5;
+  float inRing = step(r * 0.70, d) * step(d, r * 0.92);
+  if (nearTick && inRing > 0.5) {
+    float blend = isMajor ? 0.96 : 0.64;
+    col = mix(col, TICK, blend);
+  }
+
+  // Needle: 270-degree sweep, value=0 at bottom-left (225 deg CW from top),
+  //         value=1 at bottom-right (135 deg CW from top).
+  // needleA uses the same atan convention: 0=up, increasing CW.
   if (live) {
-    float needleA = (-0.75 + value * 0.75) * 2.0 * PI;  // -135° to +135°
+    float needleA = (value * 0.75 - 0.375) * 2.0 * PI;
     vec2 nd = vec2(sin(needleA), cos(needleA));
-    float along  = dot(dc / r, nd);
-    float across = abs(dc.x / r * nd.y - dc.y / r * nd.x);
-    bool onNeedle = along > 0.05 && along < 0.80 && across < 0.038;
-    if (onNeedle) col = NEEDLE;
+    float along  = dot(dc, nd) / r;
+    // Cross product magnitude gives perpendicular distance in undistorted arc.
+    float across = abs(dc.x * nd.y - dc.y * nd.x) / r;
+    if (along > 0.06 && along < 0.82 && across < 0.044)
+      col = NEEDLE;
   }
 
   // Hub dot
-  if (d < r * 0.06) col = HUB;
+  if (d < r * 0.065) col = HUB;
+
+  // Bezel ring: smoothstep from glass edge (r - bezelW) to panel face (r + bezelW).
+  // Both smoothstep calls use edge0 < edge1 — well-defined on all GLSL ES drivers.
+  float bezelInner = r - bezelW;
+  float inBezel = step(bezelInner, d) * step(d, r);
+  float outerFade = smoothstep(r, r + bezelW, d);  // 0 at r, 1 at r+bezelW
+  col = mix(col, BEZEL, inBezel);
+  col = mix(col, BG, outerFade);
+
+  // Mask everything outside the gauge circle to BG
+  float outside = step(r + bezelW, d);
+  col = mix(col, BG, outside);
 
   return col;
 }
 
 void main() {
-  // BackSide rendering: UV.x is mirrored relative to the pilot's left/right.
-  // Flip x so gauge layout matches authoring (left column on pilot's left).
+  // BackSide plane: UV.x mirrors pilot left/right — correct here so left column
+  // appears on pilot's left.
   vec2 uv = vec2(1.0 - vUv.x, vUv.y);
 
   vec3 col = BG;
+  float lr = 0.122;
 
-  // ── Left column: IAS · ALT · compass ──────────────────────────────────────
-  float lr = 0.12;
-  vec3 g;
+  // Left column: IAS, altitude, compass
+  col = mix(col, gauge(uv, vec2(0.14, 0.76), lr,        uSpeed,   true),
+            step(adist(uv, vec2(0.14, 0.76)), lr + lr * 0.14));
+  col = mix(col, gauge(uv, vec2(0.14, 0.44), lr,        uAlt,     true),
+            step(adist(uv, vec2(0.14, 0.44)), lr + lr * 0.14));
+  col = mix(col, gauge(uv, vec2(0.14, 0.14), lr * 0.78, uHeading, true),
+            step(adist(uv, vec2(0.14, 0.14)), lr * 0.78 + lr * 0.10));
 
-  g = gauge(uv, vec2(0.14, 0.76), lr, uSpeed,   true);
-  if (dist(uv, vec2(0.14, 0.76)) < lr + lr * 0.14) col = g;
+  // Centre: attitude (large static), lower heading
+  float cr = 0.178;
+  col = mix(col, gauge(uv, vec2(0.50, 0.60), cr,        0.5,      false),
+            step(adist(uv, vec2(0.50, 0.60)), cr + cr * 0.14));
+  col = mix(col, gauge(uv, vec2(0.50, 0.18), lr,        uHeading, true),
+            step(adist(uv, vec2(0.50, 0.18)), lr + lr * 0.14));
 
-  g = gauge(uv, vec2(0.14, 0.44), lr, uAlt,     true);
-  if (dist(uv, vec2(0.14, 0.44)) < lr + lr * 0.14) col = g;
+  // Right column: throttle/EGT/oil
+  float rr = 0.112;
+  col = mix(col, gauge(uv, vec2(0.86, 0.74), rr,         clamp(uThrottle / 1.1, 0.0, 1.0), true),
+            step(adist(uv, vec2(0.86, 0.74)), rr + rr * 0.14));
+  col = mix(col, gauge(uv, vec2(0.86, 0.44), rr * 0.88,  0.68, false),
+            step(adist(uv, vec2(0.86, 0.44)), rr * 0.88 + rr * 0.12));
+  col = mix(col, gauge(uv, vec2(0.86, 0.16), rr * 0.80,  0.52, false),
+            step(adist(uv, vec2(0.86, 0.16)), rr * 0.80 + rr * 0.12));
 
-  g = gauge(uv, vec2(0.14, 0.14), lr * 0.78, uHeading, true);
-  if (dist(uv, vec2(0.14, 0.14)) < lr * 0.78 + lr * 0.10) col = g;
-
-  // ── Centre: attitude (large) + heading ────────────────────────────────────
-  float cr = 0.175;
-  g = gauge(uv, vec2(0.50, 0.60), cr, 0.5, false);
-  if (dist(uv, vec2(0.50, 0.60)) < cr + cr * 0.14) col = g;
-
-  g = gauge(uv, vec2(0.50, 0.18), lr, uHeading, true);
-  if (dist(uv, vec2(0.50, 0.18)) < lr + lr * 0.14) col = g;
-
-  // ── Right column: throttle · EGT · oil ────────────────────────────────────
-  float rr = 0.11;
-  g = gauge(uv, vec2(0.86, 0.74), rr, clamp(uThrottle / 1.1, 0.0, 1.0), true);
-  if (dist(uv, vec2(0.86, 0.74)) < rr + rr * 0.14) col = g;
-
-  g = gauge(uv, vec2(0.86, 0.44), rr * 0.88, 0.68, false);
-  if (dist(uv, vec2(0.86, 0.44)) < rr * 0.88 + rr * 0.12) col = g;
-
-  g = gauge(uv, vec2(0.86, 0.16), rr * 0.80, 0.52, false);
-  if (dist(uv, vec2(0.86, 0.16)) < rr * 0.80 + rr * 0.12) col = g;
-
-  // ── MFD screen block ──────────────────────────────────────────────────────
-  float inMFD = step(0.26, uv.x) * step(uv.x, 0.42) * step(0.52, uv.y) * step(uv.y, 0.88);
+  // MFD block
+  float inMFD = step(0.26, uv.x)*step(uv.x, 0.42)*step(0.52, uv.y)*step(uv.y, 0.88);
   col = mix(col, MFD, inMFD);
-  // Subtle green border on MFD
-  float mfdBorder = step(0.255, uv.x)*step(uv.x, 0.425)*step(0.515, uv.y)*step(uv.y, 0.885)
-                  - step(0.268, uv.x)*step(uv.x, 0.413)*step(0.527, uv.y)*step(uv.y, 0.873);
-  col = mix(col, vec3(0.04, 0.14, 0.06), mfdBorder);
+  float mfdBorder = step(0.255,uv.x)*step(uv.x,0.425)*step(0.515,uv.y)*step(uv.y,0.885)
+                  - step(0.268,uv.x)*step(uv.x,0.413)*step(0.527,uv.y)*step(uv.y,0.873);
+  col = mix(col, vec3(0.04, 0.16, 0.07), mfdBorder);
 
-  // ── Warning light strip ───────────────────────────────────────────────────
+  // Warning-light strip
   float warnY = step(0.91, uv.y);
   float warnX = step(0.25, uv.x) * step(uv.x, 0.75);
   float warnPos = (uv.x - 0.25) / 0.50;
   vec3 warnCol = mix(WARN, WARN2, step(0.5, warnPos));
-  float warnGrid = step(fract(warnPos * 6.0), 0.85); // 6 warning lights with gaps
-  col = mix(col, warnCol * warnGrid, warnY * warnX * 0.85);
+  col = mix(col, warnCol * step(fract(warnPos * 6.0), 0.82), warnY * warnX * 0.90);
 
-  // ── Edge bevel: thin raised border ───────────────────────────────────────
-  float edge = max(max(1.0 - uv.x, uv.x - 0.0), max(1.0 - uv.y, uv.y));
-  float bevel = step(0.97, edge);
-  col = mix(col, BEZEL * 0.6, bevel);
+  // Thin raised bevel at panel edges
+  float eu = 1.0 - uv.x; float ev = 1.0 - uv.y;
+  float bevel = step(0.972, max(max(uv.x, eu), max(uv.y, ev)));
+  col = mix(col, BEZEL * 0.65, bevel);
 
   gl_FragColor = vec4(col, 1.0);
 }
@@ -200,10 +202,13 @@ export function buildCockpitMesh(def: CockpitDef): CockpitState {
   // any mesh rotation. rotation.y=PI would reverse winding order and cull the
   // face with FrontSide. The UV x-flip in the shader corrects the mirror.
   const panelMat = new THREE.ShaderMaterial({
-    vertexShader:   PANEL_VERT,
-    fragmentShader: PANEL_FRAG,
-    uniforms:       panelUniforms,
-    side:           THREE.BackSide,
+    vertexShader:    PANEL_VERT,
+    fragmentShader:  PANEL_FRAG,
+    uniforms:        panelUniforms,
+    side:            THREE.BackSide,
+    polygonOffset:   true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits:  -4,
   });
   const panelGeo = new THREE.PlaneGeometry(PW, PH);
   const panelMesh = new THREE.Mesh(panelGeo, panelMat);
@@ -271,24 +276,29 @@ export function buildCockpitMesh(def: CockpitDef): CockpitState {
   // These exist below the canopy sill (pBotY) so the pilot doesn't see through
   // the fuselage sides in FPV. Above the sill, the A-pillars + open glass handle
   // the view. Wall depth spans from rear arch to instrument panel face.
-  const sillY  = pBotY;               // y = eyeY - 0.15
-  const floorY = eyeY - 0.50;         // cockpit floor
-  const wallH  = sillY - floorY;      // wall height below sill
-  const wallZMid  = (pBotZ - 0.15 + def.panelZ) / 2;
-  const wallZSpan = def.panelZ - (pBotZ - 0.15);
+  const sillY  = pBotY;
+  const floorY = eyeY - 0.50;
+  const wallH  = sillY - floorY;
+  // Span from just behind the pilot to 2cm before the panel face so no face
+  // of the floor box lands at panelZ and z-fights the panel PlaneGeometry.
+  const wallZEnd  = def.panelZ - 0.02;
+  const wallZStart = pBotZ - 0.18;
+  const wallZSpan = wallZEnd - wallZStart;
+  const wallZMid  = (wallZStart + wallZEnd) / 2;
 
-  // Left sidewall panel
-  gsGeos.push(boxGeo(0.018, wallH, wallZSpan,
-    -(PW / 2 + 0.06), floorY + wallH / 2, wallZMid));
-  // Right sidewall panel
-  gsGeos.push(boxGeo(0.018, wallH, wallZSpan,
-    PW / 2 + 0.06, floorY + wallH / 2, wallZMid));
-  // Floor panel
-  gsGeos.push(boxGeo(PW * 1.2, 0.018, wallZSpan,
+  // Sidewalls — thick enough (20cm) to span from panel edge to pillar, closing
+  // the gap that otherwise lets sky bleed through in the lower side view.
+  const wallThick = 0.20;
+  gsGeos.push(boxGeo(wallThick, wallH, wallZSpan,
+    -(PW / 2 + wallThick / 2), floorY + wallH / 2, wallZMid));
+  gsGeos.push(boxGeo(wallThick, wallH, wallZSpan,
+    PW / 2 + wallThick / 2, floorY + wallH / 2, wallZMid));
+  // Floor
+  gsGeos.push(boxGeo(PW + wallThick * 2, 0.020, wallZSpan,
     0, floorY, wallZMid));
-  // Rear bulkhead (behind pilot seat)
-  gsGeos.push(boxGeo(PW * 1.2, wallH, 0.018,
-    0, floorY + wallH / 2, pBotZ - 0.18));
+  // Rear bulkhead
+  gsGeos.push(boxGeo(PW + wallThick * 2, wallH, 0.020,
+    0, floorY + wallH / 2, wallZStart));
 
   // ── Control stick ─────────────────────────────────────────────────────────
   const stickZ = eyeZ + 0.26;
