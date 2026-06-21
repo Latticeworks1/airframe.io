@@ -56,6 +56,8 @@ import {
   type InteriorMeshState
 } from "./voxelInterior";
 import { getInteriorDef } from "./content/aircraft/interiorRegistry";
+import { buildCockpitMesh, type CockpitState } from "./cockpitMesh";
+import { getCockpitDef } from "./content/aircraft/cockpitRegistry";
 import type { Vector3 } from "three";
 
 
@@ -74,6 +76,7 @@ export class WorldRenderer {
   private aircraftGroupMap = new Map<string, THREE.Group>();
   private voxelStateMap = new Map<string, VoxelMeshState>();
   private interiorStateMap = new Map<string, { state: InteriorMeshState; def: InteriorDef }>();
+  private cockpitStateMap = new Map<string, CockpitState>();
   private cloudField: CloudField | null = null;
   private islands: THREE.Mesh[] = [];
   private carriers: THREE.Group[] = [];
@@ -133,7 +136,20 @@ export class WorldRenderer {
 
     if (wasFirstPerson !== willBeFirstPerson && playerPilotId) {
       const voxState = this.voxelStateMap.get(playerPilotId);
-      if (voxState) setFPVMaterial(voxState, willBeFirstPerson);
+      const hasCanvas = this.cockpitStateMap.has(playerPilotId);
+      if (voxState) {
+        if (hasCanvas) {
+          // Canvas cockpit: restore exterior mesh visibility when leaving FPV;
+          // per-frame loop handles hiding it when entering FPV.
+          if (!willBeFirstPerson) {
+            voxState.mesh.visible = true;
+            if (voxState.spinMesh) voxState.spinMesh.visible = true;
+          }
+          // No DoubleSide material needed — canvas cockpit handles the interior.
+        } else {
+          setFPVMaterial(voxState, willBeFirstPerson);
+        }
+      }
     }
   }
 
@@ -742,6 +758,14 @@ export class WorldRenderer {
             group.add(intState.mesh);
             this.interiorStateMap.set(p.id, { state: intState, def: intDef });
           }
+
+          // Canvas-based cockpit (preferred — used when available, overrides voxel interior in FPV)
+          const ckDef = getCockpitDef(p.specs.id);
+          if (ckDef) {
+            const ckState = buildCockpitMesh(ckDef);
+            group.add(ckState.group);
+            this.cockpitStateMap.set(p.id, ckState);
+          }
         } else {
           group = this.generateProceduralAircraft(
             p.specs.id,
@@ -762,7 +786,18 @@ export class WorldRenderer {
       if (voxState) {
         animateSpinCells(voxState, dt, p.throttle);
         if (p.id === playerPilotId) {
-          setCockpitVisible(voxState, this.cameraMode !== "first-person");
+          const inFPV = this.cameraMode === "first-person";
+          const hasCanvasCockpit = this.cockpitStateMap.has(p.id);
+          if (inFPV && hasCanvasCockpit) {
+            // Canvas cockpit provides the interior — hide exterior mesh entirely
+            // so its back-faces don't bleed through the interior geometry.
+            voxState.mesh.visible = false;
+            if (voxState.spinMesh) voxState.spinMesh.visible = false;
+          } else {
+            voxState.mesh.visible = true;
+            if (voxState.spinMesh) voxState.spinMesh.visible = true;
+            setCockpitVisible(voxState, !inFPV);
+          }
         }
       }
 
@@ -833,6 +868,11 @@ export class WorldRenderer {
         if (intEntry) {
           disposeInteriorMesh(intEntry.state);
           this.interiorStateMap.delete(cachedId);
+        }
+        const ckEntry = this.cockpitStateMap.get(cachedId);
+        if (ckEntry) {
+          ckEntry.dispose();
+          this.cockpitStateMap.delete(cachedId);
         }
       }
     }
@@ -1119,6 +1159,8 @@ export class WorldRenderer {
       if (this.cockpitLight?.parent) this.scene.remove(this.cockpitLight);
       const intEntry3 = this.interiorStateMap.get(playerPilotId);
       if (intEntry3) intEntry3.state.mesh.visible = false;
+      const ckEntry3 = this.cockpitStateMap.get(playerPilotId);
+      if (ckEntry3) ckEntry3.group.visible = false;
       pGroup.visible = false;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, false);
 
@@ -1166,11 +1208,16 @@ export class WorldRenderer {
       const panelOffset = new THREE.Vector3(0, -0.25, 1.2).applyQuaternion(pGroup.quaternion);
       this.cockpitLight.position.copy(pGroup.position).add(panelOffset);
 
-      // Show interior mesh and update live cells (throttle grip, alt strip).
-      const intEntry = this.interiorStateMap.get(playerPilotId);
-      if (intEntry) {
-        intEntry.state.mesh.visible = true;
-        updateInteriorLive(intEntry.state, intEntry.def, playerPilot.throttle, playerPilot.y);
+      // Canvas cockpit takes priority over voxel interior in FPV.
+      const ckEntry = this.cockpitStateMap.get(playerPilotId);
+      if (ckEntry) {
+        ckEntry.group.visible = true;
+      } else {
+        const intEntry = this.interiorStateMap.get(playerPilotId);
+        if (intEntry) {
+          intEntry.state.mesh.visible = true;
+          updateInteriorLive(intEntry.state, intEntry.def, playerPilot.throttle, playerPilot.y);
+        }
       }
 
       // Calculate looking vector with free look rotation applied on local aircraft coordinate frames
@@ -1188,6 +1235,8 @@ export class WorldRenderer {
       if (this.cockpitLight?.parent) this.scene.remove(this.cockpitLight);
       const intEntry2 = this.interiorStateMap.get(playerPilotId);
       if (intEntry2) intEntry2.state.mesh.visible = false;
+      const ckEntry2 = this.cockpitStateMap.get(playerPilotId);
+      if (ckEntry2) ckEntry2.group.visible = false;
       pGroup.visible = true;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, false);
 
