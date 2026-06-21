@@ -286,8 +286,27 @@ export class WorldRenderer {
     const landMat = new THREE.MeshLambertMaterial({ flatShading: true });
     this.groundMaterial = landMat;
 
-    // Infinite skirt plane beyond the map boundary — matches fog color so the
-    // hard terrain edge blends into the horizon instead of showing a void.
+    // Water surface — sits just above terrain in water areas via polygonOffset
+    // so it never z-fights with the underlying terrain mesh.
+    {
+      const waterColor = new THREE.Color(this.mapDef.palette.colors[0] ?? "#0369a1");
+      const waterMat = new THREE.MeshBasicMaterial({
+        color: waterColor,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      });
+      const waterMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(world.radius * 2, world.radius * 2),
+        waterMat
+      );
+      waterMesh.rotation.x = -Math.PI / 2;
+      waterMesh.position.y = world.waterHeight;
+      this.scene.add(waterMesh);
+    }
+
+    // Infinite skirt plane sits well below water so the horizon blends into
+    // the fog color rather than dropping into void at the map boundary.
     {
       const skirtSize = world.radius * 12;
       const fogColor = new THREE.Color(this.mapDef.atmosphere.fogColor);
@@ -297,7 +316,7 @@ export class WorldRenderer {
         skirtMat
       );
       skirtMesh.rotation.x = -Math.PI / 2;
-      skirtMesh.position.y = world.waterHeight - 0.5;
+      skirtMesh.position.y = world.waterHeight - 20;
       skirtMesh.renderOrder = -1;
       this.scene.add(skirtMesh);
     }
