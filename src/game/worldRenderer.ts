@@ -286,6 +286,22 @@ export class WorldRenderer {
     const landMat = new THREE.MeshLambertMaterial({ flatShading: true });
     this.groundMaterial = landMat;
 
+    // Infinite skirt plane beyond the map boundary — matches fog color so the
+    // hard terrain edge blends into the horizon instead of showing a void.
+    {
+      const skirtSize = world.radius * 12;
+      const fogColor = new THREE.Color(this.mapDef.atmosphere.fogColor);
+      const skirtMat = new THREE.MeshBasicMaterial({ color: fogColor, fog: false });
+      const skirtMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(skirtSize, skirtSize),
+        skirtMat
+      );
+      skirtMesh.rotation.x = -Math.PI / 2;
+      skirtMesh.position.y = world.waterHeight - 0.5;
+      skirtMesh.renderOrder = -1;
+      this.scene.add(skirtMesh);
+    }
+
     if (def.kind === "heightmap") {
       // Subdivided plane displaced by heightmap — load async then displace verts
       const segs = window.devicePixelRatio >= 2 ? 128 : 256; // fewer segs on mobile
