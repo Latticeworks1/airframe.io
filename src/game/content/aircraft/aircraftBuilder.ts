@@ -53,6 +53,8 @@ function buildBlockMesh(
   if (block.rotation) {
     mesh.rotation.set(...block.rotation);
   }
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   return mesh;
 }
 

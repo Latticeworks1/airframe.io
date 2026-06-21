@@ -152,6 +152,8 @@ export class WorldRenderer {
         forceWebGL: !hasWebGPU
       });
       await this.renderer.init();
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     } catch (err) {
       console.warn("WebGPURenderer WebGPU backend failed to init, trying WebGL fallback...", err);
       try {
@@ -161,6 +163,8 @@ export class WorldRenderer {
           forceWebGL: true
         });
         await this.renderer.init();
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       } catch (err2) {
         console.error("All rendering backends failed:", err2);
         const errDiv = document.createElement("div");
@@ -201,8 +205,20 @@ export class WorldRenderer {
     );
     this.sunLight.position
       .copy(skyEnvironment.sunDirection)
-      .multiplyScalar(7000);
+      .multiplyScalar(3000);
+    this.sunLight.castShadow = true;
+    this.sunLight.shadow.mapSize.width = 2048;
+    this.sunLight.shadow.mapSize.height = 2048;
+    this.sunLight.shadow.camera.near = 0.5;
+    this.sunLight.shadow.camera.far = 10000;
+    const sd = 800;
+    this.sunLight.shadow.camera.left = -sd;
+    this.sunLight.shadow.camera.right = sd;
+    this.sunLight.shadow.camera.top = sd;
+    this.sunLight.shadow.camera.bottom = -sd;
+    this.sunLight.shadow.bias = -0.0002;
     this.scene.add(this.sunLight);
+    this.scene.add(this.sunLight.target);
     this.lightningDelay = THREE.MathUtils.lerp(
       skyEnvironment.profile.lightning.minDelay,
       skyEnvironment.profile.lightning.maxDelay,
@@ -337,6 +353,7 @@ export class WorldRenderer {
       planeGeo.rotateX(-Math.PI / 2);
       this.heightmapGeo = planeGeo;
       const planeMesh = new THREE.Mesh(planeGeo, landMat);
+      planeMesh.receiveShadow = true;
       this.scene.add(planeMesh);
 
       try {
@@ -358,6 +375,12 @@ export class WorldRenderer {
     } else if (def.kind === "glb") {
       const loader = new GLTFLoader();
       loader.load(def.path, gltf => {
+        gltf.scene.traverse(child => {
+          if (child instanceof THREE.Mesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
         this.scene.add(gltf.scene);
         this.islands.push(...(gltf.scene.children as THREE.Mesh[]));
       });
@@ -372,6 +395,7 @@ export class WorldRenderer {
       const landGeo = new THREE.BoxGeometry(groundSize, 12, groundSize);
       const landMesh = new THREE.Mesh(landGeo, landMat);
       landMesh.position.y = -8;
+      landMesh.receiveShadow = true;
       this.scene.add(landMesh);
 
       for (const block of layout.blocks) {
@@ -388,6 +412,8 @@ export class WorldRenderer {
         );
         mesh.position.set(...block.position);
         mesh.rotation.y = block.rotationY;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
         this.scene.add(mesh);
         this.islands.push(mesh);
       }
@@ -657,6 +683,17 @@ export class WorldRenderer {
   ) {
     if (!this.rendererReady) return;
     dt = THREE.MathUtils.clamp(dt, 0, 0.05);
+
+    const player = pilots.find(p => p.id === playerPilotId);
+    if (player) {
+      this.sunLight.position.set(
+        player.x + this.skyEnvironment.sunDirection.x * 2000,
+        player.y + this.skyEnvironment.sunDirection.y * 2000,
+        player.z + this.skyEnvironment.sunDirection.z * 2000
+      );
+      this.sunLight.target.position.set(player.x, player.y, player.z);
+      this.sunLight.target.updateMatrixWorld();
+    }
 
     this.syncGroundEnemies(groundTargets, dt);
     this.syncSkyZones(skyZones);
