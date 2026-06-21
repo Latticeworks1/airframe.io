@@ -11,6 +11,7 @@ import {
   CampaignMissionDefinition
 } from "../types";
 import { KnownMaps } from "../game/content/maps/mapTypes";
+import { MAP_REGISTRY } from "../game/content/maps/registry";
 import { DEFAULT_AIRCRAFT } from "../game/aircraftData";
 import { CAMPAIGN_MISSIONS } from "../game/content/campaign/campaignMissions";
 import {
@@ -83,6 +84,113 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   });
 
   const [claimedDaily, setClaimedDaily] = useState(false);
+  const [liveCounts, setLiveCounts] = useState<{ total: number; byQueue: Record<string, number> }>({ total: 0, byQueue: {} });
+  const [liveBlips, setLiveBlips] = useState<{ team: 1 | 2; nx: number; ny: number; hdx: number; hdz: number }[]>([]);
+  const [liveMapId, setLiveMapId] = useState<string | null>(null);
+  const liveCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const pollHealth = async () => {
+      try {
+        const r = await fetch("/api/health");
+        if (r.ok) {
+          const d = await r.json();
+          setLiveCounts({ total: d.totalPlayers ?? 0, byQueue: d.byQueue ?? {} });
+        }
+      } catch { /* offline */ }
+    };
+    const pollPreview = async () => {
+      try {
+        const r = await fetch("/api/preview");
+        if (r.ok) {
+          const d = await r.json();
+          const WORLD_R = 18000;
+          const blips = (d.players ?? []).map((p: { team: number; x: number; z: number; vx: number; vz: number }) => {
+            const spd = Math.sqrt(p.vx * p.vx + p.vz * p.vz) || 1;
+            return {
+              team: p.team as 1 | 2,
+              nx: Math.min(1, Math.max(0, (p.x + WORLD_R) / (WORLD_R * 2))),
+              ny: Math.min(1, Math.max(0, (p.z + WORLD_R) / (WORLD_R * 2))),
+              hdx: p.vx / spd,
+              hdz: p.vz / spd
+            };
+          });
+          setLiveBlips(blips);
+          setLiveMapId(d.queueKey ? (d.queueKey as string).split("_")[0] : null);
+        }
+      } catch { /* offline */ }
+    };
+    pollHealth(); pollPreview();
+    const hi = setInterval(pollHealth, 6000);
+    const pi = setInterval(pollPreview, 3000);
+    return () => { clearInterval(hi); clearInterval(pi); };
+  }, []);
+
+  // Draw live game preview onto canvas whenever blips update
+  useEffect(() => {
+    const canvas = liveCanvasRef.current;
+    if (!canvas || liveBlips.length === 0) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const W = canvas.width  = canvas.offsetWidth;
+    const H = canvas.height = canvas.offsetHeight;
+
+    // Background atmosphere based on live map
+    const isDesert = liveMapId?.includes("desert");
+    const isAlpine = liveMapId?.includes("alpine");
+    const isStorm  = liveMapId?.includes("storm");
+    const sky0 = isDesert ? "#2c1c0a" : isAlpine ? "#0f172a" : isStorm ? "#020617" : "#014e7a";
+    const sky1 = isDesert ? "#ca6a14" : isAlpine ? "#3b82f6" : isStorm ? "#0f172a" : "#0ea5e9";
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, sky0);
+    grad.addColorStop(1, sky1);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Subtle grid
+    ctx.strokeStyle = "rgba(255,255,255,0.04)";
+    ctx.lineWidth = 1;
+    const gridStep = Math.round(W / 18);
+    for (let gx = 0; gx < W; gx += gridStep) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+    for (let gy = 0; gy < H; gy += gridStep) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+
+    // Aircraft chevrons
+    for (const b of liveBlips) {
+      const px = b.nx * W;
+      const py = b.ny * H;
+      const col = b.team === 1 ? "#38bdf8" : "#f87171";
+      const angle = Math.atan2(b.hdx, b.hdz);
+
+      // Glow halo
+      const halo = ctx.createRadialGradient(px, py, 0, px, py, 18);
+      halo.addColorStop(0, b.team === 1 ? "rgba(56,189,248,0.25)" : "rgba(248,113,113,0.25)");
+      halo.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(px, py, 18, 0, Math.PI * 2); ctx.fill();
+
+      // Chevron shape
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(angle);
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(0, -9);
+      ctx.lineTo(5, 6);
+      ctx.lineTo(0, 3);
+      ctx.lineTo(-5, 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Scanline vignette
+    const vg = ctx.createRadialGradient(W/2, H/2, H*0.2, W/2, H/2, H*0.85);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, "rgba(3,6,12,0.75)");
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+  }, [liveBlips, liveMapId]);
 
   // Ready Room UI Popups States
   const [_showModeDropdown, setShowModeDropdown] = useState(false);
@@ -298,11 +406,27 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       id="lobby-root"
       className="relative h-screen w-full bg-[#03060c] text-slate-100 font-sans flex flex-col justify-between overflow-hidden select-none"
     >
-      {/* 3D WEBGL CARRIER PREVIEW BACKGROUND */}
+      {/* BACKGROUND: live match canvas when a game is running, 3D plane preview otherwise */}
       <div className="absolute inset-0 z-0">
-        <PlanePreview3D planeId={selectedPlaneId} fullScreen={true} skinId={activeSkinId} mapId={selectedMapId} />
+        {liveBlips.length > 0 ? (
+          <canvas
+            ref={liveCanvasRef}
+            className="absolute inset-0 w-full h-full"
+            aria-hidden
+          />
+        ) : (
+          <PlanePreview3D planeId={selectedPlaneId} fullScreen={true} skinId={activeSkinId} mapId={selectedMapId} />
+        )}
         <div className="absolute inset-0 bg-radial-gradient from-transparent via-slate-950/20 to-[#03050a]/90 pointer-events-none" />
         <div className="absolute inset-x-0 bottom-0 h-96 bg-gradient-to-t from-[#03060c] via-[#03060c]/60 to-transparent pointer-events-none" />
+
+        {liveBlips.length > 0 && (
+          <div className="absolute bottom-20 right-8 flex items-center gap-1.5 pointer-events-none" aria-hidden>
+            <div className="w-1 h-1 rounded-full bg-emerald-400 animate-ping" style={{ animationDuration: "2s" }} />
+            <span className="text-[6.5px] font-black text-emerald-400/70 uppercase font-mono tracking-widest">LIVE MATCH IN PROGRESS</span>
+          </div>
+        )}
+
         <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex items-center gap-12 pointer-events-none select-none opacity-20">
           <span className="text-[7px] text-[#475569] tracking-[0.8em] font-mono uppercase">AERO COMMAND HUB DECK ZONE B</span>
           <span className="text-[7.5px] text-[#475569] tracking-[0.8em] font-mono uppercase">HEADING 285°</span>
@@ -310,44 +434,88 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       </div>
 
       {/* Large Diegetic Plane Cycle Arrows on Left/Right edges of the screen */}
-      {activeTab === HangarTab.Lobby && (
-        <>
-          <div className="absolute left-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
-            <button
-               type="button"
-               onClick={(event) => {
-                 event.stopPropagation();
-                 handleCycleMap(-1);
-               }}
-               aria-label="Previous map"
-               className="group flex items-center justify-center w-20 h-20 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)] text-center text-[7px]"
-            >
-              <ChevronLeft size={38} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
-            </button>
-          </div>
-          
-          <div className="absolute right-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
-             <button
-               type="button"
-               onClick={(event) => {
-                 event.stopPropagation();
-                 handleCycleMap(1);
-               }}
-               aria-label="Next map"
-               className="group flex items-center justify-center w-20 h-20 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)] text-center text-[7px]"
-             >
-               <ChevronRight size={38} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
-             </button>
-          </div>
-        </>
-      )}
+      {activeTab === HangarTab.Lobby && (() => {
+        const curQueueKey = `${selectedMapId}_${selectedMode}`;
+        const mapPlayerCount = liveCounts.byQueue[curQueueKey] ?? 0;
+        const mapDef = MAP_REGISTRY[selectedMapId];
+        const theaterIdx = availableTheaters.findIndex(t => t.id === selectedMapId);
+        const modeName = selectedMode === "air_supremacy" ? "AIR SUPREMACY"
+                       : selectedMode === "intercept"     ? "INTERCEPT"
+                       : selectedMode === "duel_arena"    ? "DUEL ARENA"
+                       : selectedMode.toUpperCase();
+        return (
+          <>
+            {/* Left arrow */}
+            <div className="absolute left-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
+              <button
+                type="button"
+                onClick={(event) => { event.stopPropagation(); handleCycleMap(-1); }}
+                aria-label="Previous map"
+                className="group flex items-center justify-center w-16 h-16 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)]"
+              >
+                <ChevronLeft size={32} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
+              </button>
+            </div>
+
+            {/* Right arrow */}
+            <div className="absolute right-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
+              <button
+                type="button"
+                onClick={(event) => { event.stopPropagation(); handleCycleMap(1); }}
+                aria-label="Next map"
+                className="group flex items-center justify-center w-16 h-16 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)]"
+              >
+                <ChevronRight size={32} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
+              </button>
+            </div>
+
+            {/* Theater nameplate — centered, just above Click to Play zone */}
+            <div className="absolute left-1/2 -translate-x-1/2 top-[18%] z-40 flex flex-col items-center gap-1 pointer-events-none select-none">
+              <span className="text-[6.5px] font-black tracking-[0.4em] text-slate-600 uppercase font-mono">
+                THEATER {String(theaterIdx + 1).padStart(2, "0")} / {availableTheaters.length}
+              </span>
+              <h2
+                className="text-xl md:text-2xl font-black font-mono tracking-widest uppercase text-slate-100 leading-none"
+                style={{ textShadow: "0 2px 14px #000b, 0 0 2px #000" }}
+              >
+                {mapDef?.name ?? selectedMapId}
+              </h2>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-[7.5px] font-black tracking-[0.22em] text-amber-500 uppercase font-mono">{modeName}</span>
+                <span className="text-slate-700 text-[8px]">·</span>
+                <span className="text-[7.5px] font-bold text-emerald-400 font-mono tracking-wide">
+                  {mapPlayerCount} IN LOBBY
+                </span>
+              </div>
+              {/* Position dots */}
+              <div className="flex items-center gap-1.5 mt-1">
+                {availableTheaters.map((t, i) => (
+                  <div key={t.id} className={`rounded-full transition-all duration-200 ${i === theaterIdx ? "w-4 h-1 bg-amber-400" : "w-1 h-1 bg-slate-700"}`} />
+                ))}
+              </div>
+            </div>
+
+            {/* Aircraft name bottom-left */}
+            <div className="absolute left-4 bottom-24 md:left-8 md:bottom-20 max-w-xs text-left select-none pointer-events-none z-40">
+              <span className="text-[6.5px] font-black tracking-[0.3em] text-slate-600 uppercase font-mono block">ASSIGNED CRAFT</span>
+              <h1 className="text-xl md:text-3xl font-black font-mono tracking-tight text-slate-100 uppercase leading-none mt-0.5"
+                style={{ textShadow: "0 2px 8px #000a" }}>
+                {currentPlane.name}
+              </h1>
+              <p className="text-[8.5px] text-slate-500 font-mono tracking-wide mt-1 uppercase">
+                {currentPlane.weapons.join("  ·  ")}
+              </p>
+            </div>
+          </>
+        );
+      })()}
 
       {/* 1. TOP BAR */}
       <header className="relative z-45 w-full bg-[#050912]/80 border-b border-slate-900/60 shadow-lg shadow-black/40 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center h-14">
           
           {/* Brand/Logo */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-md bg-gradient-to-br from-amber-500 to-red-600 flex items-center justify-center font-black text-[13px] text-white shadow-md shadow-red-900/40">
               A
             </div>
@@ -356,6 +524,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 AIRFRAME<span className="text-amber-500">.IO</span>
               </span>
               <span className="text-[6.5px] text-slate-500 uppercase font-mono tracking-widest block mt-0.5">3D BATTLE PROTOCOL</span>
+            </div>
+            <div className="flex items-center gap-1 bg-emerald-950/60 border border-emerald-500/25 rounded px-1.5 py-0.5 ml-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[8px] font-black text-emerald-400 font-mono tracking-wider">{liveCounts.total} ONLINE</span>
             </div>
           </div>
 
@@ -478,20 +650,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         }`}
       >
         
-        {/* Lobby State: Center-First Ready Room */}
+        {/* Lobby State: Click to Play center — theater nameplate and aircraft info rendered in the arrow overlay above */}
         {activeTab === HangarTab.Lobby && (
           <div className="w-full h-full min-h-[70vh] flex flex-col justify-center items-center text-center animate-fadeIn py-6 relative">
-            
-            {/* Plane Hero Specs Info (Pushed to the absolute lower-left) */}
-            <div className="absolute left-4 bottom-22 md:left-6 md:bottom-18 max-w-sm text-left select-none animate-fadeIn pointer-events-none">
-              <h1 className="text-2xl md:text-4xl font-black font-mono tracking-tight text-[#f8fafc] uppercase leading-none">
-                {currentPlane.name}
-              </h1>
-              <p className="text-[10px] md:text-[11px] text-slate-400 font-mono tracking-wide leading-relaxed mt-2.5 uppercase font-medium">
-                {currentPlane.weapons.join("  •  ")}
-              </p>
-            </div>
-
             <div
               className="animate-click-to-play pointer-events-none select-none whitespace-nowrap text-center text-3xl md:text-5xl font-black tracking-[0.16em] text-white uppercase"
               style={{
@@ -501,7 +662,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             >
               Click to Play
             </div>
-
           </div>
         )}
 

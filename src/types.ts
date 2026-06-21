@@ -43,6 +43,7 @@ export interface AircraftSpecs {
   pitchRateDegPerSec?: number;
   rollRateDegPerSec?: number;
   yawRateDegPerSec?: number;
+  radarRange?: number;        // lead-indicator lock range in world units (default 4500)
   color: string;
   secondaryColor: string;
   accentColor: string;
@@ -284,6 +285,12 @@ export interface Pilot {
       aggression: number;   // 0 to 1
       avoidance: number;    // 0 to 1
     };
+  };
+  netSnap?: {
+    x: number; y: number; z: number;
+    vx: number; vy: number; vz: number;
+    qx: number; qy: number; qz: number; qw: number;
+    at: number;
   };
 }
 
