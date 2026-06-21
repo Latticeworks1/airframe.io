@@ -379,35 +379,35 @@ const TacticalMapOverlay: React.FC<{
 
   return (
     <div className="absolute inset-0 z-[80] pointer-events-auto bg-[#05080f]/90 backdrop-blur-md flex items-center justify-center p-5 font-mono">
-      <div className="relative w-full max-w-6xl h-[min(820px,88vh)] rounded-2xl border border-[#2a3a2a]/60 bg-[#0a0f08]/98 shadow-[0_0_70px_rgba(0,0,0,0.8)] overflow-hidden">
-        <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between border-b border-[#2a3a2a]/40 bg-black/50 px-5 py-3">
+      <div className="relative w-full max-w-6xl h-[min(820px,88vh)] rounded-2xl border border-slate-800/50 bg-[#080b12]/98 shadow-[0_0_70px_rgba(0,0,0,0.85)] overflow-hidden">
+        <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between border-b border-slate-800/40 bg-black/50 px-5 py-3">
           <div>
-            <div className="text-[9px] font-black tracking-[0.25em] text-[#8aad7a] uppercase">
+            <div className="text-[9px] font-black tracking-[0.25em] text-amber-500/80 uppercase">
               Tactical Chart — {mapDef?.name ?? mapId}
             </div>
-            <div className="mt-0.5 text-[10px] text-[#556650]">
+            <div className="mt-0.5 text-[10px] text-slate-600">
               Scale 1 : {(radius * 2 / 1000).toFixed(0)} km · {matchMode}
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded border border-[#3a4a3a]/60 bg-[#1a2a1a]/60 px-4 py-2 text-[9px] font-black tracking-widest text-[#8aad7a] hover:bg-[#1a3a1a] cursor-pointer"
+            className="rounded border border-slate-700/60 bg-slate-900/60 px-4 py-2 text-[9px] font-black tracking-widest text-slate-300 hover:bg-slate-800/60 cursor-pointer"
           >
             CLOSE [M]
           </button>
         </div>
 
         <div className="grid h-full grid-cols-1 lg:grid-cols-[1fr_280px] pt-14">
-          <div className="relative min-h-0 p-3">
-            <div className="relative w-full h-full rounded border border-[#2a3a2a]/40 overflow-hidden bg-[#0a1820]">
+          <div className="relative min-h-0 p-3 flex flex-col gap-2">
+            <div className="relative flex-1 min-h-0 rounded border border-slate-800/40 overflow-hidden bg-[#0a1820]">
               <svg className="absolute inset-0 w-full h-full" viewBox="0 0 800 800" aria-label="Tactical map">
                 <defs>
                   <pattern id="chart-grid-major" width="87.5" height="87.5" patternUnits="userSpaceOnUse">
-                    <path d="M87.5 0H0V87.5" fill="none" stroke="#3a5a3a" strokeOpacity="0.35" strokeWidth="0.6"/>
+                    <path d="M87.5 0H0V87.5" fill="none" stroke="#334155" strokeOpacity="0.40" strokeWidth="0.6"/>
                   </pattern>
                   <pattern id="chart-grid-minor" width="17.5" height="17.5" patternUnits="userSpaceOnUse">
-                    <path d="M17.5 0H0V17.5" fill="none" stroke="#2a4a2a" strokeOpacity="0.22" strokeWidth="0.3"/>
+                    <path d="M17.5 0H0V17.5" fill="none" stroke="#1e293b" strokeOpacity="0.28" strokeWidth="0.3"/>
                   </pattern>
                 </defs>
 
@@ -424,8 +424,8 @@ const TacticalMapOverlay: React.FC<{
                 <rect x="0" y="0" width="800" height="800" fill="url(#chart-grid-major)"/>
 
                 {/* Axes */}
-                <line x1="400" y1="0" x2="400" y2="800" stroke="#3a5a3a" strokeOpacity="0.5" strokeWidth="0.8"/>
-                <line x1="0" y1="400" x2="800" y2="400" stroke="#3a5a3a" strokeOpacity="0.5" strokeWidth="0.8"/>
+                <line x1="400" y1="0" x2="400" y2="800" stroke="#334155" strokeOpacity="0.55" strokeWidth="0.8"/>
+                <line x1="0" y1="400" x2="800" y2="400" stroke="#334155" strokeOpacity="0.55" strokeWidth="0.8"/>
 
                 {/* Grid labels — km offset from centre */}
                 {gridLines.filter(v => v !== 0).map(v => {
@@ -433,27 +433,27 @@ const TacticalMapOverlay: React.FC<{
                   const label = `${v > 0 ? "+" : ""}${(v/1000).toFixed(0)}K`;
                   return (
                     <g key={v}>
-                      <text x={px.x} y="796" textAnchor="middle" fill="#4a6a4a" fontSize="7" fontFamily="monospace">{label}</text>
-                      <text x="4" y={py.y + 3} textAnchor="start" fill="#4a6a4a" fontSize="7" fontFamily="monospace">{label}</text>
+                      <text x={px.x} y="796" textAnchor="middle" fill="#475569" fontSize="7" fontFamily="monospace">{label}</text>
+                      <text x="4" y={py.y + 3} textAnchor="start" fill="#475569" fontSize="7" fontFamily="monospace">{label}</text>
                     </g>
                   );
                 })}
 
                 {/* Compass rose — bottom-right */}
                 <g transform="translate(762,762)">
-                  <circle r="16" fill="#0a1820" stroke="#3a5a3a" strokeWidth="0.8" strokeOpacity="0.6"/>
-                  <path d="M0 -13L2.5 0L0 4L-2.5 0Z" fill="#c8d8c8"/>
-                  <path d="M0 13L2.5 0L0 -4L-2.5 0Z" fill="#3a5a3a" fillOpacity="0.5"/>
-                  <text y="-17" textAnchor="middle" fill="#c8d8c8" fontSize="7" fontFamily="monospace" fontWeight="900">N</text>
+                  <circle r="16" fill="#0a1820" stroke="#334155" strokeWidth="0.8" strokeOpacity="0.7"/>
+                  <path d="M0 -13L2.5 0L0 4L-2.5 0Z" fill="#cbd5e1"/>
+                  <path d="M0 13L2.5 0L0 -4L-2.5 0Z" fill="#334155" fillOpacity="0.6"/>
+                  <text y="-17" textAnchor="middle" fill="#cbd5e1" fontSize="7" fontFamily="monospace" fontWeight="900">N</text>
                 </g>
 
                 {/* Scale bar — bottom-left */}
                 <g transform="translate(20,778)">
-                  <rect width="70" height="4" fill="#c8d8c8" fillOpacity="0.6"/>
-                  <rect x="35" width="35" height="4" fill="#0a1820" fillOpacity="0.6" stroke="#c8d8c8" strokeWidth="0.5"/>
-                  <rect width="70" height="4" fill="none" stroke="#c8d8c8" strokeWidth="0.5"/>
-                  <text x="0" y="-3" fill="#8aad7a" fontSize="7" fontFamily="monospace">{(gridKm/1000).toFixed(0)} KM</text>
-                  <text x="70" y="-3" fill="#8aad7a" fontSize="7" fontFamily="monospace">{(gridKm*2/1000).toFixed(0)} KM</text>
+                  <rect width="70" height="4" fill="#cbd5e1" fillOpacity="0.5"/>
+                  <rect x="35" width="35" height="4" fill="#0a1820" fillOpacity="0.6" stroke="#cbd5e1" strokeWidth="0.5"/>
+                  <rect width="70" height="4" fill="none" stroke="#cbd5e1" strokeWidth="0.5"/>
+                  <text x="0" y="-3" fill="#64748b" fontSize="7" fontFamily="monospace">{(gridKm/1000).toFixed(0)} KM</text>
+                  <text x="70" y="-3" fill="#64748b" fontSize="7" fontFamily="monospace">{(gridKm*2/1000).toFixed(0)} KM</text>
                 </g>
 
               {zones.map(zone => {
@@ -533,56 +533,91 @@ const TacticalMapOverlay: React.FC<{
               })()}
               </svg>
             </div>
+
+            {/* Dynamic info strip */}
+            {(() => {
+              const t1 = pilots.filter(p => p.team === 1);
+              const t2 = pilots.filter(p => p.team === 2);
+              const t1Alive = t1.filter(p => p.damage.fuselage > 0).length;
+              const t2Alive = t2.filter(p => p.damage.fuselage > 0).length;
+              const t1Targets = groundTargets.filter(t => t.team === 1 && !t.isDead).length;
+              const t2Targets = groundTargets.filter(t => t.team === 2 && !t.isDead).length;
+              return (
+                <div className="shrink-0 rounded border border-slate-800/40 bg-[#080b12]/80 px-4 py-2.5 flex gap-6 items-center text-[8px] font-mono">
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="text-[7px] font-black tracking-widest text-slate-600 uppercase">Airspace</span>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {zones.map(zone => {
+                        const col = zone.owningTeam === 1 ? "bg-rose-500" : zone.owningTeam === 2 ? "bg-sky-500" : "bg-slate-600";
+                        return (
+                          <span key={zone.id} className="flex items-center gap-1">
+                            <span className={`w-1.5 h-1.5 rounded-full inline-block ${col}`}/>
+                            <span className="text-slate-400">{zone.name.split(" ")[0]}</span>
+                          </span>
+                        );
+                      })}
+                      {zones.length === 0 && <span className="text-slate-700">No zones</span>}
+                    </div>
+                  </div>
+                  <div className="w-px h-8 bg-slate-800 shrink-0"/>
+                  <div className="flex gap-4">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[7px] font-black tracking-widest text-rose-500/60 uppercase">Team 1</span>
+                      <span className="text-slate-300"><span className="text-rose-400 font-black">{t1Alive}</span> airborne · <span className="text-slate-500">{t1Targets}</span> objs</span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[7px] font-black tracking-widest text-sky-500/60 uppercase">Team 2</span>
+                      <span className="text-slate-300"><span className="text-sky-400 font-black">{t2Alive}</span> airborne · <span className="text-slate-500">{t2Targets}</span> objs</span>
+                    </div>
+                  </div>
+                  {campaignState && (
+                    <>
+                      <div className="w-px h-8 bg-slate-800 shrink-0"/>
+                      <div className="flex flex-col gap-1 flex-1 min-w-0">
+                        <span className="text-[7px] font-black tracking-widest text-slate-600 uppercase">Mission — {campaignState.name}</span>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1 bg-slate-800 rounded overflow-hidden">
+                            <div className="h-full bg-amber-500/70 rounded" style={{ width: `${clamp(campaignState.progress / Math.max(1, campaignState.targetCount), 0, 1) * 100}%` }}/>
+                          </div>
+                          <span className="text-slate-500 shrink-0">{campaignState.progress}/{campaignState.targetCount}</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
-          <aside className="border-l border-[#2a3a2a]/40 bg-[#08100a]/60 p-5 text-left overflow-y-auto">
-            {campaignState && (
-              <div className="mb-4">
-                <div className="text-[8px] font-black tracking-[0.2em] text-slate-500 uppercase">
-                  Mission
-                </div>
-                <div className="mt-2 rounded-xl border border-emerald-400/20 bg-emerald-950/20 p-3">
-                  <div className="text-[10px] font-black text-white uppercase">{campaignState.name}</div>
-                  <div className="mt-2 text-[8px] leading-relaxed text-emerald-200">{campaignState.objectiveLabel}</div>
-                  <div className="mt-3 h-1.5 overflow-hidden rounded bg-slate-900">
-                    <div
-                      className="h-full bg-emerald-400"
-                      style={{ width: `${clamp(campaignState.progress / Math.max(1, campaignState.targetCount), 0, 1) * 100}%` }}
-                    />
-                  </div>
-                  <div className="mt-1 text-right text-[9px] font-black text-emerald-300">
-                    {campaignState.progress} / {campaignState.targetCount}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Full scoreboard — all pilots including bots */}
-            <div className="mt-3">
-              <div className="text-[8px] font-black tracking-[0.2em] text-[#5a7a5a] uppercase mb-2">Sorties</div>
+          <aside className="border-l border-slate-800/40 bg-slate-950/40 p-4 text-left overflow-y-auto">
+            {/* Full sorties board — all pilots including bots */}
+            <div>
+              <div className="text-[8px] font-black tracking-[0.2em] text-slate-600 uppercase mb-2">Sorties</div>
               {([1, 2] as const).map(team => {
                 const teamPilots = [...pilots].filter(p => p.team === team).sort((a, b) => b.score - a.score);
-                const hdr = team === 1 ? { c: "text-rose-400", b: "border-rose-500/20" } : { c: "text-sky-400", b: "border-sky-500/20" };
+                const hdr = team === 1
+                  ? { c: "text-rose-400", b: "border-rose-500/20" }
+                  : { c: "text-sky-400",  b: "border-sky-500/20"  };
                 return (
-                  <div key={team} className={`mb-2.5 rounded border ${hdr.b} bg-black/20`}>
+                  <div key={team} className={`mb-2 rounded border ${hdr.b} bg-black/20`}>
                     <div className={`flex items-center justify-between px-3 py-1 border-b ${hdr.b}`}>
                       <span className={`text-[7.5px] font-black tracking-widest uppercase ${hdr.c}`}>Team {team}</span>
-                      <span className="text-[6px] text-[#3a5a3a] font-mono">K · D · KDR · SCR</span>
+                      <span className="text-[6px] text-slate-700 font-mono">K · D · KDR · SCR</span>
                     </div>
-                    <div className="px-3 py-1 space-y-0.5">
+                    <div className="px-3 py-1 space-y-px">
                       {teamPilots.map(p => {
                         const kdr = p.deaths === 0 ? p.kills.toFixed(0) : (p.kills / p.deaths).toFixed(1);
                         const isMe = p.id === "player";
-                        const rowClass = isMe ? "text-amber-300" : p.isBot ? "text-[#3a5a3a]" : "text-[#8aad7a]";
+                        const rowClass = isMe ? "text-amber-300" : p.isBot ? "text-slate-700" : "text-slate-400";
                         return (
                           <div key={p.id} className={`flex items-center gap-1 text-[7.5px] font-mono leading-tight ${rowClass}`}>
                             <span className="flex-1 truncate min-w-0">{isMe ? "▶ " : p.isBot ? "· " : "★ "}{p.name.replace(" (You)", "")}</span>
                             <span className="w-5 text-right shrink-0">{p.kills}</span>
-                            <span className="opacity-40">·</span>
+                            <span className="text-slate-800">·</span>
                             <span className="w-5 text-right shrink-0">{p.deaths}</span>
-                            <span className="opacity-40">·</span>
+                            <span className="text-slate-800">·</span>
                             <span className="w-7 text-right shrink-0">{kdr}</span>
-                            <span className="opacity-40">·</span>
+                            <span className="text-slate-800">·</span>
                             <span className={`w-7 text-right shrink-0 font-black ${isMe ? "text-amber-300" : ""}`}>{p.score}</span>
                           </div>
                         );
@@ -593,31 +628,13 @@ const TacticalMapOverlay: React.FC<{
               })}
             </div>
 
-            {/* Elevation key */}
-            <div className="mt-3 text-[8px] font-black tracking-[0.2em] text-[#5a7a5a] uppercase mb-1">Elevation</div>
-            <div className="space-y-0.5">
-              {[
-                { label: "Mountain", color: "#a28e76" },
-                { label: "Highland",  color: "#6e5840" },
-                { label: "Lowland",   color: "#587850" },
-                { label: "Beach",     color: "#c8b990" },
-                { label: "Shallow",   color: "#1e5a92" },
-                { label: "Ocean",     color: "#12203e" },
-              ].map(e => (
-                <div key={e.label} className="flex items-center gap-2">
-                  <span className="w-3 h-2.5 rounded-sm inline-block shrink-0" style={{ background: e.color }}/>
-                  <span className="text-[7px] text-[#5a7a5a]">{e.label}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-3 text-[8px] font-black tracking-[0.2em] text-[#5a7a5a] uppercase mb-1">Symbols</div>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[7px] text-[#4a6a4a]">
+            <div className="mt-3 text-[8px] font-black tracking-[0.2em] text-slate-600 uppercase mb-1">Symbols</div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[7px] text-slate-600">
               <div className="flex items-center gap-1.5"><span className="text-amber-300 text-[9px]">▲</span> You</div>
               <div className="flex items-center gap-1.5"><span className="text-rose-400 text-[9px]">▲</span> Red</div>
               <div className="flex items-center gap-1.5"><span className="text-sky-400 text-[9px]">▲</span> Blue</div>
-              <div className="flex items-center gap-1.5"><span className="text-[#3a5a3a] text-[9px]">⊕</span> Bot</div>
-              <div className="flex items-center gap-1.5"><span className="text-emerald-400 text-[9px]">◇</span> Obj</div>
+              <div className="flex items-center gap-1.5"><span className="text-slate-700 text-[9px]">⊕</span> Bot</div>
+              <div className="flex items-center gap-1.5"><span className="text-slate-500 text-[9px]">◇</span> Obj</div>
             </div>
           </aside>
         </div>
