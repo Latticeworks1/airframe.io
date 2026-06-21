@@ -57,7 +57,8 @@ export class ScreenEffectsPass {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       depthBuffer: true,
-      stencilBuffer: false
+      stencilBuffer: false,
+      samples: 4
     });
     this.renderTarget.texture.name = "world-screen-effects-source";
 

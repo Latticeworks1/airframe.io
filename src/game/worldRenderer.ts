@@ -181,7 +181,7 @@ export class WorldRenderer {
     this.renderer.autoClear = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = skyEnvironment.exposure;
-    this.renderer.domElement.style.imageRendering = "pixelated";
+    this.renderer.domElement.style.imageRendering = "auto";
     this.container.appendChild(this.renderer.domElement);
     this.screenEffects = new ScreenEffectsPass(
       this.renderer,
