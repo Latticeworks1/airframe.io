@@ -669,7 +669,8 @@ export default function App() {
       ax: number; ay: number;
     };
     let telemPending: TelemetryFrame[] = [];
-    const telemWs = new WebSocket(`ws://${location.host}/telemetry-ws`);
+    const telemWsProto = location.protocol === "https:" ? "wss://" : "ws://";
+    const telemWs = new WebSocket(`${telemWsProto}${location.host}/telemetry-ws`);
     const roundTelemetry = (value: number, decimals: number) => {
       const scale = 10 ** decimals;
       return Math.round(value * scale) / scale;
