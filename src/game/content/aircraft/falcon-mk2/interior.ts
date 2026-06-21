@@ -1,147 +1,167 @@
 import type { InteriorDef, InteriorCell } from "../../../voxelInterior";
 import { solid, slab, faceZ, faceX, screen } from "../../../voxelInterior";
 
-// voxelSize = 0.05 m per grid unit
+// voxelSize = 0.025 m per grid unit (2.5 cm — twice the previous resolution)
 // +Z = nose, +Y = up, +X = right wing
 //
-// cockpitEye: world [0, 1.28, 0.80] → interior grid [0, 26, 16]
-// Canopy space: gx ±10, gy 15–30, gz −5 to 40
-// Panel face: gz = 35 (1.75 m ahead of eye)
+// cockpitEye world [0, 1.28, 0.80] → interior grid [0, 51, 32]
+// Canopy space: gx ±20, gy 30–62, gz 0–80
+// Panel face: gz = 70 (1.75 m ahead)
+// Glare shield top: gy = 52 (1.30 m — eye height, so panel reads as below horizon)
 //
-// Layout derived from reference cockpit diagrams:
-//   Center panel  — attitude instruments (largest cluster)
-//   Left panel    — IAS, baro altimeter
-//   Right panel   — engine instruments
-//   Glare shield  — gunsight reflector above coaming
-//   Center floor  — control stick (prominent), landing gear handle
-//   Left console  — throttle quadrant (live)
-//   Right console — electrics / radio stacks
+// Layout from labeled reference diagrams:
+//   Panel center — attitude instruments (large cluster)
+//   Panel left   — IAS, baro altimeter
+//   Panel right  — engine instruments cluster
+//   Glare shield — reflector gunsight above coaming, center
+//   Center floor — control stick (close in, between legs, below eye)
+//   Left console — throttle quadrant (live)
+//   Right console— electrics / radio stacks
 
-const VS = 0.05;
+const VS = 0.025;
 
-// palette — MeshBasicMaterial renders these at face value, no lighting factor
-const FRAME  = 0x101828; // canopy arch / structural frame — near black
-const PANEL  = 0x1a2c44; // instrument panel base
-const COAM   = 0x22304e; // glare shield coaming — slightly lighter
-const SCREEN = 0x060e0a; // unlit display glass
-const BEZEL  = 0x0e1c20; // instrument bezel ring
-const SIGHT  = 0x182838; // gunsight body
-const SEAT   = 0x14203a; // seat fabric
-const STICK  = 0x283858; // control stick / stalk
-const GRIP   = 0x30486a; // stick grip / handle heads
-const TQBODY = 0x1c2c40; // throttle quadrant housing
-const TQLVR  = 0x18d870; // throttle lever (live — overwritten per frame)
-const GEAR   = 0x283040; // landing gear handle
-const FLOOR  = 0x0e1626; // cockpit floor
-const CONS   = 0x14203a; // side console surfaces
-const RADIO  = 0x0c1820; // radio/electrics stacks (dark boxes)
+const FRAME  = 0x101828; // canopy arch / structural — very dark
+const PANEL  = 0x162438; // instrument panel face
+const COAM   = 0x1e3050; // glare shield coaming
+const SCREEN = 0x050c08; // unlit display glass
+const BEZEL  = 0x0c1820; // instrument bezel
+const SIGHT  = 0x162434; // gunsight body
+const SEAT   = 0x12203a; // seat fabric
+const STICK  = 0x243858; // control stick stalk
+const GRIP   = 0x2c4870; // stick grip / handle head
+const TQBODY = 0x182c40; // throttle housing
+const TQLVR  = 0x10d060; // throttle lever (live — overwritten per frame)
+const GEAR   = 0x243040; // landing gear handle housing
+const FLOOR  = 0x0c1424; // cockpit floor
+const CONS   = 0x10202e; // side console face — darker than panel
 
 function build(): InteriorCell[] {
   const m = new Map<string, InteriorCell>();
 
   // ── FLOOR ─────────────────────────────────────────────────────────────────
-  slab(m, -9, 2, 9, 36, 15, FLOOR);
+  // Floor spans beneath the pilot from behind seat to panel base.
+  slab(m, -18, 8, 18, 72, 30, FLOOR);
 
-  // ── CANOPY FRAME ──────────────────────────────────────────────────────────
-  // Rear arch behind pilot head — spans across the top like a roll hoop.
-  slab(m, -8, 3, 8, 10, 30, FRAME);     // top of arch
-  faceX(m, 3, 25, 10, 30, -8, FRAME);  // left side of arch
-  faceX(m, 3, 25, 10, 30,  8, FRAME);  // right side of arch
-
-  // Left A-pillar — runs from shoulder level upward and forward to glare shield
-  // Bottom post beside left shoulder
-  faceX(m, 10, 25, 14, 30, -9, FRAME);
-  // Sloping rail along canopy left side up to panel coaming
-  for (let gz = 14; gz <= 29; gz++) {
-    const gy = 29 - Math.round((gz - 14) * 0.1); // very slight downward slope
-    m.set(`-9,${gy},${gz}`, { gx: -9, gy, gz, color: FRAME });
+  // ── CANOPY ARCH / A-PILLARS ───────────────────────────────────────────────
+  // Each A-pillar is ONE CELL THICK — a structural rib, not a slab.
+  // Left A-pillar: follows the canopy frame from rear arch forward to coaming.
+  // gx = -19 (one cell in from the outer canopy wall).
+  for (let gz = 8; gz <= 58; gz++) {
+    // Rear section rises steeply; forward section levels off at gy=60 (coaming height)
+    const gy = gz < 22 ? 58 + Math.round((22 - gz) * 0.4)
+             : gz < 58 ? 60
+             : 60;
+    m.set(`-19,${gy},${gz}`, { gx: -19, gy, gz, color: FRAME });
+    // Vertical strut going DOWN from arch to eye-level sill
+    for (let y = 50; y <= gy; y++)
+      m.set(`-19,${y},${gz}`, { gx: -19, gy: y, gz, color: FRAME });
   }
+  // Left sill rail — horizontal ledge at gy=50, gx=-18 to -19, connects arch to panel side
+  slab(m, -19, 20, -18, 70, 50, FRAME);
 
-  // Right A-pillar — mirror
-  faceX(m, 10, 25, 14, 30, 9, FRAME);
-  for (let gz = 14; gz <= 29; gz++) {
-    const gy = 29 - Math.round((gz - 14) * 0.1);
-    m.set(`9,${gy},${gz}`, { gx: 9, gy, gz, color: FRAME });
+  // Right A-pillar and sill rail (mirror)
+  for (let gz = 8; gz <= 58; gz++) {
+    const gy = gz < 22 ? 58 + Math.round((22 - gz) * 0.4) : 60;
+    m.set(`19,${gy},${gz}`, { gx: 19, gy, gz, color: FRAME });
+    for (let y = 50; y <= gy; y++)
+      m.set(`19,${y},${gz}`, { gx: 19, gy: y, gz, color: FRAME });
   }
+  slab(m, 18, 20, 19, 70, 50, FRAME);
 
-  // Top canopy rail — forward from rear arch to panel coaming across top
-  slab(m, -8, 10, 8, 29, 30, FRAME);
+  // Rear arch — spans across behind the pilot's head
+  slab(m, -18, 8, 18, 20, 62, FRAME);   // top bar
+  faceX(m, 8, 50, 20, 62, -18, FRAME);  // left side of arch
+  faceX(m, 8, 50, 20, 62,  18, FRAME);  // right side of arch
 
-  // Center canopy bow — thin vertical divider running fore-aft at top center
-  for (let gz = 8; gz <= 28; gz++)
-    m.set(`0,30,${gz}`, { gx: 0, gy: 30, gz, color: FRAME });
+  // Top canopy rail running fore-aft at gy=62 (roof of canopy)
+  slab(m, -17, 8, 17, 58, 62, FRAME);
 
-  // ── GLARE SHIELD / COAMING ─────────────────────────────────────────────────
-  // Horizontal surface between top of panel and canopy glass
-  slab(m, -7, 29, 7, 35, 26, COAM);
-  // Front lip of coaming (faces pilot, visible from eye position)
-  faceZ(m, -7, 24, 7, 26, 29, COAM);
+  // Center canopy bow — ONE CELL WIDE divider running fore-aft along the center line
+  for (let gz = 8; gz <= 57; gz++)
+    m.set(`0,62,${gz}`, { gx: 0, gy: 62, gz, color: FRAME });
 
-  // ── GUNSIGHT ───────────────────────────────────────────────────────────────
-  // Reflector sight body sits on the glare shield center line.
-  // Pilots look through this — keep it narrow (2 cells wide) so it doesn't obstruct.
-  solid(m, -1, 26, 28, 1, 30, 29, SIGHT);
-  // Sight glass (thin horizontal pane at gy=30)
-  slab(m, -2, 30, 2, 33, 30, 0x1a3a2e);
+  // ── GLARE SHIELD / COAMING ────────────────────────────────────────────────
+  // Sits at gy=52 (just above eye at gy=51), gz=56-70.
+  // One cell thick so it's a visible ledge but doesn't block the sky.
+  slab(m, -14, 56, 14, 70, 52, COAM);
+  // Coaming front lip (faces pilot from gz=56)
+  faceZ(m, -14, 48, 14, 52, 56, COAM);
 
-  // ── INSTRUMENT PANEL FACE ─────────────────────────────────────────────────
-  faceZ(m, -9, 15, 9, 26, 35, PANEL);
+  // ── GUNSIGHT ──────────────────────────────────────────────────────────────
+  // Reflector sight: narrow body on center line at gy=52-55, gz=60-65.
+  // Two cells wide so it frames the gunsight glass without blocking view.
+  solid(m, -2, 52, 60, 2, 56, 65, SIGHT);
+  // Sight glass — thin amber plate at gy=57
+  slab(m, -3, 61, 3, 65, 57, 0x1a3a28);
 
-  // Center cluster — attitude instruments (largest group, image 4 center)
-  screen(m, -4, 16, 4, 24, 35, BEZEL, SCREEN);
+  // ── INSTRUMENT PANEL (center section only — NOT wall to wall) ─────────────
+  // Real cockpits have a narrower center panel with separate side consoles.
+  // Center panel: gx -14 to 14, gy 30 to 52, gz 70.
+  faceZ(m, -14, 30, 14, 52, 70, PANEL);
 
-  // Left cluster — IAS (upper) + baro altimeter (lower), image 4 left
-  screen(m, -8, 21, -5, 25, 35, BEZEL, SCREEN); // IAS
-  screen(m, -8, 16, -5, 20, 35, BEZEL, SCREEN); // altimeter
+  // ── INSTRUMENT SCREENS ────────────────────────────────────────────────────
+  // Center — attitude instruments (large, dominant cluster per reference image 4)
+  screen(m, -7, 33, 7, 50, 70, BEZEL, SCREEN);
 
-  // Right cluster — engine instruments, image 4 right
-  screen(m, 5, 21,  8, 25, 35, BEZEL, SCREEN); // upper engine gauge
-  screen(m, 5, 16,  8, 20, 35, BEZEL, SCREEN); // lower engine gauge
+  // Left — IAS (upper) + baro alt (lower)
+  screen(m, -13, 42, -8, 51, 70, BEZEL, SCREEN); // IAS
+  screen(m, -13, 31, -8, 41, 70, BEZEL, SCREEN); // altimeter
 
-  // ── LEFT SIDE CONSOLE ─────────────────────────────────────────────────────
-  faceX(m, 15, 15, 35, 26, -10, CONS);
-  // Console raised surface
-  solid(m, -9, 15, 11, -7, 22, 28, TQBODY);
+  // Right — engine instruments (two gauges stacked)
+  screen(m,  8, 42, 13, 51, 70, BEZEL, SCREEN); // engine upper
+  screen(m,  8, 31, 13, 41, 70, BEZEL, SCREEN); // engine lower
 
-  // Throttle quadrant — images 4 and 5 show throttle handle on left
-  // Gate runs along gz=14 to gz=26, grip slides with throttle
-  for (let gz = 14; gz <= 26; gz++)
-    m.set(`-7,21,${gz}`, { gx: -7, gy: 21, gz, color: STICK });
-  // Live grip cell — slides from gz=14 (idle) to gz=26 (WEP)
-  m.set(`-7,22,20`, { gx: -7, gy: 22, gz: 20, color: TQLVR, liveId: "throttle:14:12" });
+  // ── SIDE CONSOLES ─────────────────────────────────────────────────────────
+  // Left console surface — lower than panel top, runs from gz=20 to gz=68
+  slab(m, -18, 20, -15, 68, 44, CONS);
+  // Right console surface
+  slab(m, 15, 20, 18, 68, 44, CONS);
 
-  // ── RIGHT SIDE CONSOLE ─────────────────────────────────────────────────────
-  faceX(m, 15, 15, 35, 26, 10, CONS);
-  // Radio/electrics stacks — image 5 right side
-  solid(m, 8, 15, 9, 9, 21, 24, RADIO);
-  solid(m, 8, 15, 9, 9, 21, 26, RADIO);
+  // Left console front lip (connects to panel side)
+  faceZ(m, -18, 30, -15, 44, 68, CONS);
+  // Right console front lip
+  faceZ(m, 15, 30, 18, 44, 68, CONS);
+
+  // ── THROTTLE QUADRANT (left console) ──────────────────────────────────────
+  // Gate housing on left console — gz = 28 to 56
+  solid(m, -17, 44, 28, -15, 50, 56, TQBODY);
+  // Gate slot (one-cell channel the lever rides in)
+  for (let gz = 28; gz <= 56; gz++)
+    m.set(`-16,47,${gz}`, { gx: -16, gy: 47, gz, color: STICK });
+  // Live throttle lever grip — slides gz=28 (idle) → gz=56 (WEP)
+  m.set(`-16,50,28`, { gx: -16, gy: 50, gz: 28, color: TQLVR, liveId: "throttle:28:28" });
+
+  // ── RIGHT CONSOLE — radio / electrics stacks ──────────────────────────────
+  solid(m, 15, 44,  9, 17, 50, 34, 0x0c1820);
+  solid(m, 15, 44, 36, 17, 50, 52, 0x0c1820);
 
   // ── SEAT ──────────────────────────────────────────────────────────────────
-  // Cushion
-  slab(m, -4, 2, 4, 11, 16, SEAT);
-  // Seat back — references show high-backed ejection seat
-  faceZ(m, -4, 16, 4, 28, 2, SEAT);
-  // Headrest
-  solid(m, -2, 26, 2, 2, 29, 4, GRIP);
+  // Seat cushion — behind pilot, gz = 4 to 22, gx ±8
+  slab(m, -8, 4, 8, 22, 30, SEAT);
+  // Seat back — high ejection-seat back from floor to headrest
+  faceZ(m, -8, 30, 8, 58, 4, SEAT);
+  // Headrest block
+  solid(m, -4, 56, 2, 4, 60, 8, GRIP);
 
   // ── CONTROL STICK ─────────────────────────────────────────────────────────
-  // Image 5: tall central column, prominent.
-  // Base at floor level, extends to above instrument glareshield height.
-  for (let gy = 16; gy <= 23; gy++)
-    m.set(`0,${gy},20`, { gx: 0, gy, gz: 20, color: STICK });
-  // Grip block at top
-  solid(m, -1, 22, -1, 1, 25, 21, GRIP);
-  // Side handle nub (trigger side — forward-right)
-  solid(m, 0, 23, 0, 1, 24, 22, STICK);
+  // The stick is BETWEEN THE PILOT'S LEGS — close to the camera, below eye level.
+  // gz=38 (one meter ahead of eye at gz=32), gy=30-44.
+  // At this position it is OUT of the direct sightline to the instrument panel.
+  for (let gy = 30; gy <= 44; gy++)
+    m.set(`0,${gy},38`, { gx: 0, gy, gz: 38, color: STICK });
+  // Grip block at top — small, knuckle-sized
+  solid(m, -2, 43, 37, 2, 47, 40, GRIP);
+  // Forward trigger nub
+  m.set(`1,45,39`, { gx: 1, gy: 45, gz: 39, color: STICK });
 
   // ── LANDING GEAR HANDLE ───────────────────────────────────────────────────
-  // Image 5: center console, beside the stick base
-  solid(m, -3, 15, -3, -2, 19, 24, GEAR);
-  m.set(`-2,20,24`, { gx: -2, gy: 20, gz: 24, color: 0x703010 }); // red knob
+  // Left of stick base, per reference image 5
+  solid(m, -5, 30, -4, -3, 38, 40, GEAR);
+  m.set(`-4,39,38`, { gx: -4, gy: 39, gz: 38, color: 0x882020 }); // red knob
 
   // ── RUDDER PEDALS ─────────────────────────────────────────────────────────
-  solid(m, -4, 14, -2, -2, 15, 30, GRIP);
-  solid(m,  2, 14, 30,  4, 15, 32, GRIP);
+  solid(m, -8, 28, -4, -5, 30, 62, GRIP);
+  solid(m,  5, 28, 62,  8, 30, 66, GRIP);
 
   return Array.from(m.values());
 }
