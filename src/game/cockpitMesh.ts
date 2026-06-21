@@ -1,293 +1,298 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
-// Cockpit interior built from Three.js geometry primitives + canvas textures.
-// This replaces voxel-grid interiors for the main player aircraft.
-// All coordinates are in aircraft LOCAL space (same frame as cockpitEye).
+// Cockpit interior: canvas-based panel + merged BoxGeometry structure.
+// Total draw calls: 1 (ShaderMaterial panel) + 1 (merged structure) = 2 DC in FPV.
+// All coordinates are in aircraft LOCAL space (same frame as cockpitEye in render.ts).
 
 export interface CockpitDef {
-  eye: [number, number, number];  // camera eye in local space (from render.ts)
-  panelZ: number;  // instrument panel face z-position (m)
-  panelY: number;  // panel center y-position (m)
-  panelW: number;  // panel width (m)
-  panelH: number;  // panel height (m)
+  eye: [number, number, number];
+  panelZ: number;
+  panelY: number;
+  panelW: number;
+  panelH: number;
 }
 
 export interface CockpitState {
   group: THREE.Group;
-  dispose: () => void;
+  updateLive(speed01: number, alt01: number, heading01: number, throttle01: number): void;
+  dispose(): void;
 }
 
-// ---- canvas panel texture ---------------------------------------------------
+// ---- Panel ShaderMaterial ---------------------------------------------------
+// Draws gauge bezels, tick marks, and live needles entirely in GLSL.
+// Uniforms are updated per frame; no canvas redraw cost.
 
-function drawPanelCanvas(w: number, h: number): HTMLCanvasElement {
-  const c = document.createElement("canvas");
-  c.width = w; c.height = h;
-  const ctx = c.getContext("2d")!;
+const PANEL_VERT = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
 
-  // Base panel — dark blue-grey
-  ctx.fillStyle = "#141e30";
-  ctx.fillRect(0, 0, w, h);
+const PANEL_FRAG = /* glsl */ `
+precision mediump float;
+varying vec2 vUv;
 
-  // Subtle surface texture — slightly lighter in center, darker at edges
-  const grad = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, w * 0.65);
-  grad.addColorStop(0, "rgba(40,60,90,0.25)");
-  grad.addColorStop(1, "rgba(0,0,0,0.30)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
+uniform float uAspect;   // panelW / panelH
+uniform float uSpeed;    // 0-1
+uniform float uAlt;      // 0-1
+uniform float uHeading;  // 0-1 (0=N, clockwise)
+uniform float uThrottle; // 0-1.1
 
-  // -- helper: draw a circular analog gauge --
-  function gauge(cx: number, cy: number, r: number, label?: string) {
-    // Outer bezel ring — raised edge highlight
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.strokeStyle = "#3a5070";
-    ctx.lineWidth = Math.max(2, r * 0.10);
-    ctx.stroke();
+const float PI = 3.14159265;
 
-    // Inner face — very dark glass
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.86, 0, Math.PI * 2);
-    ctx.fillStyle = "#060c12";
-    ctx.fill();
+const vec3 BG     = vec3(0.055, 0.090, 0.145);
+const vec3 BEZEL  = vec3(0.200, 0.310, 0.460);
+const vec3 GLASS  = vec3(0.018, 0.040, 0.065);
+const vec3 TICK   = vec3(0.280, 0.460, 0.640);
+const vec3 NEEDLE = vec3(0.980, 0.890, 0.680);
+const vec3 HUB    = vec3(0.500, 0.650, 0.800);
+const vec3 MFD    = vec3(0.010, 0.030, 0.040);
+const vec3 WARN   = vec3(0.220, 0.050, 0.040);
+const vec3 WARN2  = vec3(0.030, 0.150, 0.060);
 
-    // Tick marks around the face
-    ctx.save();
-    ctx.translate(cx, cy);
-    for (let i = 0; i < 36; i++) {
-      const angle = (i / 36) * Math.PI * 2;
-      const major = i % 3 === 0;
-      const inner = r * 0.86 * (major ? 0.70 : 0.80);
-      const outer = r * 0.86 * 0.90;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
-      ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
-      ctx.strokeStyle = major ? "#5080a0" : "#304860";
-      ctx.lineWidth = major ? 2 : 1;
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    // Center dot
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.05, 0, Math.PI * 2);
-    ctx.fillStyle = "#7090b0";
-    ctx.fill();
-
-    // Optional label below gauge
-    if (label) {
-      ctx.fillStyle = "#4a6a8a";
-      ctx.font = `${Math.round(r * 0.22)}px monospace`;
-      ctx.textAlign = "center";
-      ctx.fillText(label, cx, cy + r + r * 0.30);
-    }
-  }
-
-  // -- helper: draw a rectangular MFD screen --
-  function mfd(x: number, y: number, sw: number, sh: number) {
-    // Bezel
-    ctx.fillStyle = "#1a2c44";
-    ctx.fillRect(x - 4, y - 4, sw + 8, sh + 8);
-    // Screen glass
-    ctx.fillStyle = "#040c10";
-    ctx.fillRect(x, y, sw, sh);
-    // Dim green glow border
-    ctx.strokeStyle = "#0d2818";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x + 2, y + 2, sw - 4, sh - 4);
-  }
-
-  // ── Layout matches labeled reference images ──────────────────────────────
-  // Panel dimensions passed in as w×h. Reference layout:
-  //   Left column (x ~ w*0.15): IAS, altimeter, radio compass
-  //   Center (x ~ w*0.50): attitude + heading (large cluster)
-  //   Right column (x ~ w*0.85): engine instruments
-
-  const lx = w * 0.14;  // left column center x
-  const cx = w * 0.50;  // center column
-  const rx = w * 0.86;  // right column
-
-  const gr = h * 0.15;  // small gauge radius
-  const grl = h * 0.18; // large gauge radius
-
-  // Center — attitude indicator (large, dominant)
-  gauge(cx, h * 0.38, grl * 1.1, "ATT");
-  // Center — heading indicator below
-  gauge(cx, h * 0.76, grl * 0.8, "HDG");
-
-  // Left column
-  gauge(lx, h * 0.26, gr, "IAS");
-  gauge(lx, h * 0.58, gr, "ALT");
-  gauge(lx, h * 0.84, gr * 0.75, "RDO");
-
-  // Right column — engine instruments
-  gauge(rx, h * 0.26, gr, "RPM");
-  gauge(rx, h * 0.56, gr * 0.85, "EGT");
-  gauge(rx, h * 0.82, gr * 0.75, "OIL");
-
-  // Center MFD between left gauges and attitude cluster
-  mfd(w * 0.25, h * 0.18, w * 0.16, h * 0.30);
-
-  // Warning light strip across the top of the panel
-  const wlColors = ["#400000","#402000","#004000","#001040","#003030","#200040"];
-  for (let i = 0; i < wlColors.length; i++) {
-    const wx = w * 0.28 + i * w * 0.08;
-    ctx.fillStyle = wlColors[i];
-    ctx.fillRect(wx, h * 0.03, w * 0.06, h * 0.06);
-    ctx.strokeStyle = "#2a3a50";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(wx, h * 0.03, w * 0.06, h * 0.06);
-  }
-
-  return c;
+// Aspect-corrected distance from uv to center c
+float dist(vec2 uv, vec2 c) {
+  return length(vec2((uv.x - c.x) * uAspect, uv.y - c.y));
 }
 
-// ---- structural geometry helpers -------------------------------------------
+// Draw one analog gauge. value in [0,1], sweeps 270° from bottom-left to bottom-right.
+vec3 gauge(vec2 uv, vec2 c, float r, float value, bool live) {
+  float d = dist(uv, c);
+  float bezelW = r * 0.13;
 
-function box(
-  w: number, h: number, d: number,
-  x: number, y: number, z: number,
-  rotX = 0, rotY = 0, rotZ = 0,
-  color = 0x0e1828
-): THREE.Mesh {
+  if (d > r + bezelW) return BG;
+
+  // Bezel ring
+  if (d > r - bezelW * 0.2) {
+    float hi = smoothstep(r + bezelW, r + bezelW * 0.6, d);
+    return mix(BG, BEZEL, hi);
+  }
+
+  vec3 col = GLASS;
+
+  // Tick marks: 36 divisions, major every 3rd
+  vec2 dc = vec2((uv.x - c.x) * uAspect, uv.y - c.y);
+  float angle = atan(dc.x, dc.y);  // 0 at top, clockwise
+  float normA = mod(angle / (2.0 * PI) + 1.5, 1.0);
+  float tickDiv = 1.0 / 36.0;
+  float nearT = mod(normA + tickDiv * 0.5, tickDiv);
+  bool major = nearT < tickDiv * 0.12;
+  bool minor = nearT < tickDiv * 0.06;
+  float inTickZone = step(r * 0.70, d) * step(d, r * 0.92);
+  if (major && inTickZone > 0.0)  col = mix(col, TICK, 0.90);
+  else if (minor && inTickZone > 0.0) col = mix(col, TICK, 0.55);
+
+  // Needle: 270° sweep starting from ~bottom-left (-135°), clockwise
+  if (live) {
+    float needleA = (-0.75 + value * 0.75) * 2.0 * PI;  // -135° to +135°
+    vec2 nd = vec2(sin(needleA), cos(needleA));
+    float along  = dot(dc / r, nd);
+    float across = abs(dc.x / r * nd.y - dc.y / r * nd.x);
+    bool onNeedle = along > 0.05 && along < 0.80 && across < 0.038;
+    if (onNeedle) col = NEEDLE;
+  }
+
+  // Hub dot
+  if (d < r * 0.06) col = HUB;
+
+  return col;
+}
+
+void main() {
+  // rotation.y=PI on mesh mirrors UV.x — undo that so layout matches authoring coords
+  vec2 uv = vec2(1.0 - vUv.x, vUv.y);
+
+  vec3 col = BG;
+
+  // ── Left column: IAS · ALT · compass ──────────────────────────────────────
+  float lr = 0.12;
+  vec3 g;
+
+  g = gauge(uv, vec2(0.14, 0.76), lr, uSpeed,   true);
+  if (dist(uv, vec2(0.14, 0.76)) < lr + lr * 0.14) col = g;
+
+  g = gauge(uv, vec2(0.14, 0.44), lr, uAlt,     true);
+  if (dist(uv, vec2(0.14, 0.44)) < lr + lr * 0.14) col = g;
+
+  g = gauge(uv, vec2(0.14, 0.14), lr * 0.78, uHeading, true);
+  if (dist(uv, vec2(0.14, 0.14)) < lr * 0.78 + lr * 0.10) col = g;
+
+  // ── Centre: attitude (large) + heading ────────────────────────────────────
+  float cr = 0.175;
+  g = gauge(uv, vec2(0.50, 0.60), cr, 0.5, false);
+  if (dist(uv, vec2(0.50, 0.60)) < cr + cr * 0.14) col = g;
+
+  g = gauge(uv, vec2(0.50, 0.18), lr, uHeading, true);
+  if (dist(uv, vec2(0.50, 0.18)) < lr + lr * 0.14) col = g;
+
+  // ── Right column: throttle · EGT · oil ────────────────────────────────────
+  float rr = 0.11;
+  g = gauge(uv, vec2(0.86, 0.74), rr, clamp(uThrottle / 1.1, 0.0, 1.0), true);
+  if (dist(uv, vec2(0.86, 0.74)) < rr + rr * 0.14) col = g;
+
+  g = gauge(uv, vec2(0.86, 0.44), rr * 0.88, 0.68, false);
+  if (dist(uv, vec2(0.86, 0.44)) < rr * 0.88 + rr * 0.12) col = g;
+
+  g = gauge(uv, vec2(0.86, 0.16), rr * 0.80, 0.52, false);
+  if (dist(uv, vec2(0.86, 0.16)) < rr * 0.80 + rr * 0.12) col = g;
+
+  // ── MFD screen block ──────────────────────────────────────────────────────
+  float inMFD = step(0.26, uv.x) * step(uv.x, 0.42) * step(0.52, uv.y) * step(uv.y, 0.88);
+  col = mix(col, MFD, inMFD);
+  // Subtle green border on MFD
+  float mfdBorder = step(0.255, uv.x)*step(uv.x, 0.425)*step(0.515, uv.y)*step(uv.y, 0.885)
+                  - step(0.268, uv.x)*step(uv.x, 0.413)*step(0.527, uv.y)*step(uv.y, 0.873);
+  col = mix(col, vec3(0.04, 0.14, 0.06), mfdBorder);
+
+  // ── Warning light strip ───────────────────────────────────────────────────
+  float warnY = step(0.91, uv.y);
+  float warnX = step(0.25, uv.x) * step(uv.x, 0.75);
+  float warnPos = (uv.x - 0.25) / 0.50;
+  vec3 warnCol = mix(WARN, WARN2, step(0.5, warnPos));
+  float warnGrid = step(fract(warnPos * 6.0), 0.85); // 6 warning lights with gaps
+  col = mix(col, warnCol * warnGrid, warnY * warnX * 0.85);
+
+  // ── Edge bevel: thin raised border ───────────────────────────────────────
+  float edge = max(max(1.0 - uv.x, uv.x - 0.0), max(1.0 - uv.y, uv.y));
+  float bevel = step(0.97, edge);
+  col = mix(col, BEZEL * 0.6, bevel);
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+// ---- Structural geometry helpers -------------------------------------------
+
+function boxGeo(w: number, h: number, d: number, x: number, y: number, z: number,
+                rx = 0, ry = 0, rz = 0): THREE.BufferGeometry {
   const geo = new THREE.BoxGeometry(w, h, d);
-  const mat = new THREE.MeshBasicMaterial({ color });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(x, y, z);
-  mesh.rotation.set(rotX, rotY, rotZ);
-  return mesh;
+  const m = new THREE.Matrix4().compose(
+    new THREE.Vector3(x, y, z),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)),
+    new THREE.Vector3(1, 1, 1)
+  );
+  geo.applyMatrix4(m);
+  return geo;
 }
 
-// ---- build -----------------------------------------------------------------
+// ---- Build -----------------------------------------------------------------
 
 export function buildCockpitMesh(def: CockpitDef): CockpitState {
   const group = new THREE.Group();
-  const disposables: THREE.BufferGeometry[] = [];
-  const mats: THREE.Material[] = [];
-
   const [, eyeY, eyeZ] = def.eye;
-
-  // ── INSTRUMENT PANEL FACE ─────────────────────────────────────────────────
-  // PlaneGeometry in XY plane, rotated to face pilot (face toward -Z).
   const PW = def.panelW;
   const PH = def.panelH;
-  const canvasRes = 1024;
-  const panelCanvas = drawPanelCanvas(canvasRes, Math.round(canvasRes * (PH / PW)));
-  const panelTex = new THREE.CanvasTexture(panelCanvas);
-  panelTex.colorSpace = THREE.SRGBColorSpace;
+  const panelTop = def.panelY + PH / 2;
 
+  // ── Panel face — ShaderMaterial, 1 DC, live via uniforms ─────────────────
+  const panelUniforms = {
+    uAspect:   { value: PW / PH },
+    uSpeed:    { value: 0.0 },
+    uAlt:      { value: 0.0 },
+    uHeading:  { value: 0.0 },
+    uThrottle: { value: 0.0 },
+  };
+  const panelMat = new THREE.ShaderMaterial({
+    vertexShader:   PANEL_VERT,
+    fragmentShader: PANEL_FRAG,
+    uniforms:       panelUniforms,
+    side:           THREE.FrontSide,
+  });
   const panelGeo = new THREE.PlaneGeometry(PW, PH);
-  const panelMat = new THREE.MeshBasicMaterial({ map: panelTex, side: THREE.FrontSide });
   const panelMesh = new THREE.Mesh(panelGeo, panelMat);
-  // Panel faces -Z (toward pilot). PlaneGeometry faces +Z by default; rotate 180° around Y.
-  panelMesh.rotation.y = Math.PI;
+  panelMesh.rotation.y = Math.PI;  // face toward -Z (toward pilot)
   panelMesh.position.set(0, def.panelY, def.panelZ);
   group.add(panelMesh);
-  disposables.push(panelGeo);
-  mats.push(panelMat);
 
-  // ── GLARE SHIELD ──────────────────────────────────────────────────────────
-  // Horizontal ledge sitting just above the panel top, at eye height.
-  // Thickness 3cm, depth 0.35m (runs from panel z back toward pilot).
-  const gsDep = 0.35;
-  const gsY = def.panelY + PH / 2 + 0.015; // just above panel top
-  const gsZ = def.panelZ - gsDep / 2;
-  const gsMesh = box(PW * 0.95, 0.030, gsDep, 0, gsY, gsZ, 0, 0, 0, 0x1a2c40);
-  group.add(gsMesh);
-  disposables.push(gsMesh.geometry);
-  mats.push(gsMesh.material as THREE.Material);
+  // ── Glare shield — horizontal slab flush against panel top, no gap ────────
+  // Positioned so its rear face is at panelZ, extending forward toward pilot.
+  // The bottom of the slab is at panelTop (y=panelTop), so it butts directly
+  // against the top edge of the panel face. Both share z=panelZ at their contact.
+  const gsDep = 0.32;
+  const gsThk = 0.028;
+  const gsGeos: THREE.BufferGeometry[] = [];
+  gsGeos.push(boxGeo(PW * 0.94, gsThk, gsDep,
+    0, panelTop + gsThk / 2, def.panelZ - gsDep / 2));
+  // Coaming front lip (thin vertical face, visible to pilot)
+  gsGeos.push(boxGeo(PW * 0.94, 0.055, 0.012,
+    0, panelTop - 0.027, def.panelZ - gsDep));
 
-  // Glare shield front lip (thin vertical face visible to pilot)
-  const glipMesh = box(PW * 0.95, 0.060, 0.015, 0, gsY - 0.015, def.panelZ - gsDep, 0, 0, 0, 0x1e3050);
-  group.add(glipMesh);
-  disposables.push(glipMesh.geometry);
-  mats.push(glipMesh.material as THREE.Material);
+  // ── Gunsight body ─────────────────────────────────────────────────────────
+  gsGeos.push(boxGeo(0.055, 0.055, 0.10,
+    0, panelTop + gsThk + 0.042, def.panelZ - gsDep + 0.04));
+  // Sight glass — thin horizontal plate
+  gsGeos.push(boxGeo(0.080, 0.004, 0.065,
+    0, panelTop + gsThk + 0.088, def.panelZ - gsDep + 0.07));
 
-  // ── GUNSIGHT ──────────────────────────────────────────────────────────────
-  // Small body on glare shield center, right at eye level.
-  const gsBody = box(0.06, 0.06, 0.12, 0, gsY + 0.05, gsZ - 0.05, 0, 0, 0, 0x162434);
-  group.add(gsBody);
-  disposables.push(gsBody.geometry);
-  mats.push(gsBody.material as THREE.Material);
-
-  // ── CANOPY FRAME / A-PILLARS ──────────────────────────────────────────────
-  // Each A-pillar is a thin box (3cm × 3cm cross-section) running at an angle
-  // from behind-shoulder level up to the glare shield rail.
-
-  // Pillar runs from:
-  //   bottom: [±(PW/2+0.05), eyeY - 0.05, eyeZ + 0.10]  (just behind eye, shoulder level)
-  //   top:    [±(PW/2+0.05), eyeY + 0.28, def.panelZ - 0.05] (top of glare shield)
-  //
-  // We compute length and angle from these two points.
-  const pBotZ = eyeZ + 0.05;
-  const pBotY = eyeY - 0.10;
-  const pTopZ = def.panelZ - 0.05;
-  const pTopY = eyeY + 0.28;
+  // ── A-pillars ─────────────────────────────────────────────────────────────
+  // Pillar runs from base (behind shoulder, at sill height) to top (glare shield level).
+  const pBotY = eyeY - 0.15;
+  const pBotZ = eyeZ + 0.08;
+  const pTopY = eyeY + 0.30;
+  const pTopZ = def.panelZ - 0.04;
   const pX = PW / 2 + 0.04;
 
   const dz = pTopZ - pBotZ;
   const dy = pTopY - pBotY;
   const pLen = Math.sqrt(dz * dz + dy * dy);
-  const pAngle = -Math.atan2(dy, dz); // rotation around X axis
-
-  const midY = (pBotY + pTopY) / 2;
-  const midZ = (pBotZ + pTopZ) / 2;
+  const pAngle = -Math.atan2(dy, dz); // rotation around X
 
   for (const side of [-1, 1]) {
-    const pillar = box(0.030, pLen, 0.030, side * pX, midY, midZ, pAngle, 0, 0, 0x0e1828);
-    group.add(pillar);
-    disposables.push(pillar.geometry);
-    mats.push(pillar.material as THREE.Material);
+    gsGeos.push(boxGeo(0.028, pLen, 0.028,
+      side * pX, (pBotY + pTopY) / 2, (pBotZ + pTopZ) / 2,
+      pAngle, 0, 0));
   }
 
-  // Top canopy rail — horizontal bar running fore-aft above pilot
-  const railLen = pTopZ - pBotZ + 0.15;
-  const railZ = (pBotZ + pTopZ) / 2;
-  const topRail = box(PW * 0.95, 0.025, railLen, 0, pTopY + 0.015, railZ, 0, 0, 0, 0x0e1828);
-  group.add(topRail);
-  disposables.push(topRail.geometry);
-  mats.push(topRail.material as THREE.Material);
+  // ── Canopy top rail and rear arch ─────────────────────────────────────────
+  const railLen = pTopZ - pBotZ + 0.18;
+  const railZ   = (pBotZ + pTopZ) / 2;
+  // Top rail (fore-aft at arch height)
+  gsGeos.push(boxGeo(PW * 0.92, 0.022, railLen,
+    0, pTopY + 0.012, railZ));
+  // Center bow (thin vertical fin)
+  gsGeos.push(boxGeo(0.018, pTopY - pBotY + 0.06, railLen * 0.88,
+    0, (pBotY + pTopY) / 2 + 0.03, railZ));
+  // Rear arch
+  gsGeos.push(boxGeo(PW * 0.92, 0.022, 0.022,
+    0, pBotY + 0.08, pBotZ - 0.10));
+  // Left and right sill rails (horizontal ledge at sill height)
+  for (const side of [-1, 1]) {
+    gsGeos.push(boxGeo(0.018, 0.014, railLen,
+      side * (PW / 2 + 0.02), pBotY, railZ));
+  }
 
-  // Center canopy bow — thin vertical fin at top center
-  const bowH = pTopY - pBotY + 0.06;
-  const bowZ = midZ;
-  const centerBow = box(0.020, bowH, railLen * 0.92, 0, midY + 0.03, bowZ, 0, 0, 0, 0x0e1828);
-  group.add(centerBow);
-  disposables.push(centerBow.geometry);
-  mats.push(centerBow.material as THREE.Material);
+  // ── Control stick ─────────────────────────────────────────────────────────
+  const stickZ = eyeZ + 0.26;
+  const stickH = 0.30;
+  const stickBaseY = eyeY - 0.46;
+  gsGeos.push(boxGeo(0.020, stickH, 0.020, 0, stickBaseY + stickH / 2, stickZ));
+  gsGeos.push(boxGeo(0.050, 0.068, 0.050, 0, stickBaseY + stickH + 0.034, stickZ));
 
-  // Rear arch above and behind pilot head
-  const archY = pBotY + 0.10;
-  const archZ = pBotZ - 0.12;
-  const rearArch = box(PW * 0.95, 0.025, 0.025, 0, archY, archZ, 0, 0, 0, 0x0e1828);
-  group.add(rearArch);
-  disposables.push(rearArch.geometry);
-  mats.push(rearArch.material as THREE.Material);
-
-  // ── CONTROL STICK ─────────────────────────────────────────────────────────
-  // Between the legs — close to pilot, below instrument sightline.
-  // Stick at eyeZ + 0.25m, from floor to just below glare shield
-  const stickZ = eyeZ + 0.22;
-  const stickH = 0.32;
-  const stickBaseY = eyeY - 0.45;
-  const stick = box(0.022, stickH, 0.022, 0, stickBaseY + stickH / 2, stickZ, 0, 0, 0, 0x243858);
-  group.add(stick);
-  disposables.push(stick.geometry);
-  mats.push(stick.material as THREE.Material);
-
-  // Stick grip
-  const gripMesh = box(0.055, 0.075, 0.055, 0, stickBaseY + stickH + 0.037, stickZ, 0, 0, 0, 0x2c4870);
-  group.add(gripMesh);
-  disposables.push(gripMesh.geometry);
-  mats.push(gripMesh.material as THREE.Material);
+  // Merge all structural geometry into a single mesh — 1 DC total for structure
+  const merged = mergeGeometries(gsGeos);
+  gsGeos.forEach(g => g.dispose());
+  const structMat = new THREE.MeshBasicMaterial({ color: 0x0d1828 });
+  const structMesh = new THREE.Mesh(merged, structMat);
+  group.add(structMesh);
 
   group.visible = false;
 
   return {
     group,
-    dispose: () => {
-      panelTex.dispose();
-      disposables.forEach(g => g.dispose());
-      mats.forEach(m => m.dispose());
+    updateLive(speed01, alt01, heading01, throttle01) {
+      panelUniforms.uSpeed.value    = speed01;
+      panelUniforms.uAlt.value      = alt01;
+      panelUniforms.uHeading.value  = heading01;
+      panelUniforms.uThrottle.value = throttle01;
+    },
+    dispose() {
+      panelGeo.dispose();
+      panelMat.dispose();
+      merged.dispose();
+      structMat.dispose();
     },
   };
 }
