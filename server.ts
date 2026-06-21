@@ -355,7 +355,6 @@ async function startServer() {
             if (s !== ws && s.readyState === WebSocket.OPEN) s.send(payload);
           });
         }
-
         else if (data.type === "skyzone_update") {
           if (!currentRoomId) return;
           const room = rooms.get(currentRoomId);

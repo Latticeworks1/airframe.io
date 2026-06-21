@@ -1,29 +1,21 @@
 ---
-title: Airframe
+title: Airframe.io
 emoji: ✈
-colorFrom: blue
-colorTo: gray
+colorFrom: gray
+colorTo: blue
 sdk: docker
 pinned: false
+app_port: 7860
 ---
 
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Airframe.io
 
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/b6161bb9-c8b6-4b03-be83-6396771e4515
+A browser-based multiplayer air-combat game with energy flight dynamics, tactical damage zones, real-time dogfights, and multiple game modes.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+**Prerequisites:** Node.js
 
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+1. Install dependencies: `npm install`
+2. Copy `.env.example` to `.env.local` and set `GEMINI_API_KEY`
+3. Run: `npm run dev`

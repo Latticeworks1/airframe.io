@@ -87,7 +87,7 @@ export function updateSkyDome(
   const runtime = skyRuntime.get(skyDome);
   if (!runtime) return;
 
-  const targetAltitude = THREE.MathUtils.smoothstep(camera.position.y, 250, 7500);
+  const targetAltitude = THREE.MathUtils.smoothstep(camera.position.y, 80, 3500);
   const blend = 1 - Math.exp(-THREE.MathUtils.clamp(dt, 0, 0.05) * 0.8);
   runtime.smoothedAltitude = THREE.MathUtils.lerp(
     runtime.smoothedAltitude,
@@ -117,13 +117,23 @@ export function updateSkyDome(
   if (fog) {
     fog.near = THREE.MathUtils.lerp(
       profile.fogNear,
-      profile.fogNear * 1.55,
+      profile.fogNear * 3.0,
       altitude
     );
     fog.far = THREE.MathUtils.lerp(
       profile.fogFar,
-      profile.fogFar * 1.28,
+      profile.fogFar * 6.0,
       altitude
     );
+  }
+
+  // Extend camera draw distance so terrain near the map edge is never clipped
+  // when the player is high enough to see it. The base far of 15000 covers
+  // low-altitude combat; at altitude 1.0 the far plane scales to fit the full
+  // diagonal of a typical 18 000-unit-radius world.
+  const cam = camera as THREE.PerspectiveCamera;
+  if (cam.isPerspectiveCamera) {
+    cam.far = THREE.MathUtils.lerp(15000, 72000, altitude * altitude);
+    cam.updateProjectionMatrix();
   }
 }

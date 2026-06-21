@@ -14,6 +14,7 @@ type CellState = {
   gx: number;
   gy: number;
   gz: number;
+  exposed: boolean;
 };
 
 export interface VoxelMeshState {
@@ -46,12 +47,9 @@ const _col = new THREE.Color();
 export function buildVoxelMesh(def: VoxelAircraftDef): VoxelMeshState {
   const grid = new Set<string>(def.cells.map(c => cellKey(c.gx, c.gy, c.gz)));
 
-  const surface = def.cells.filter(c =>
-    DIRS.some(([dx, dy, dz]) => !grid.has(cellKey(c.gx + dx, c.gy + dy, c.gz + dz)))
-  );
-
-  const staticSurface = surface.filter(c => !c.tags?.includes("spinZ"));
-  const spinSurface   = surface.filter(c =>  c.tags?.includes("spinZ"));
+  // Include all authored cells rather than filtering/culling internal cells at startup.
+  const staticSurface = def.cells.filter(c => !c.tags?.includes("spinZ"));
+  const spinSurface   = def.cells.filter(c =>  c.tags?.includes("spinZ"));
 
   const geo = new THREE.BoxGeometry(1, 1, 1);
   const mat = new THREE.MeshLambertMaterial({ flatShading: true, vertexColors: true });
@@ -76,23 +74,33 @@ export function buildVoxelMesh(def: VoxelAircraftDef): VoxelMeshState {
 
   for (let i = 0; i < staticSurface.length; i++) {
     const c = staticSurface[i];
-    _setMatrix(_dummy, c.gx * s, c.gy * s, c.gz * s, gap);
-    mesh.setMatrixAt(i, _dummy.matrix);
+    const exposed = DIRS.some(([dx, dy, dz]) => !grid.has(cellKey(c.gx + dx, c.gy + dy, c.gz + dz)));
+    if (exposed) {
+      _setMatrix(_dummy, c.gx * s, c.gy * s, c.gz * s, gap);
+      mesh.setMatrixAt(i, _dummy.matrix);
+    } else {
+      mesh.setMatrixAt(i, _hiddenMatrix);
+    }
     mesh.setColorAt!(i, _col.setHex(c.color));
     cells.set(cellKey(c.gx, c.gy, c.gz), {
       idx: i, inSpinMesh: false, alive: true, zone: c.zone,
-      tags: c.tags, gx: c.gx, gy: c.gy, gz: c.gz
+      tags: c.tags, gx: c.gx, gy: c.gy, gz: c.gz, exposed
     });
   }
 
   for (let i = 0; i < spinSurface.length; i++) {
     const c = spinSurface[i];
-    _setMatrix(_dummy, c.gx * s, c.gy * s, c.gz * s, gap);
-    spinMesh!.setMatrixAt(i, _dummy.matrix);
+    const exposed = DIRS.some(([dx, dy, dz]) => !grid.has(cellKey(c.gx + dx, c.gy + dy, c.gz + dz)));
+    if (exposed) {
+      _setMatrix(_dummy, c.gx * s, c.gy * s, c.gz * s, gap);
+      spinMesh!.setMatrixAt(i, _dummy.matrix);
+    } else {
+      spinMesh!.setMatrixAt(i, _hiddenMatrix);
+    }
     spinMesh!.setColorAt!(i, _col.setHex(c.color));
     cells.set(cellKey(c.gx, c.gy, c.gz), {
       idx: i, inSpinMesh: true, alive: true, zone: c.zone,
-      tags: c.tags, gx: c.gx, gy: c.gy, gz: c.gz
+      tags: c.tags, gx: c.gx, gy: c.gy, gz: c.gz, exposed
     });
     spinCells.push({ idx: i, gx: c.gx, gy: c.gy, gz: c.gz });
   }
@@ -188,9 +196,12 @@ export function deformAtImpact(
   let staticDirty = false;
   let spinDirty = false;
 
+  const deadCells: CellState[] = [];
+
   if (struckCell?.alive) {
     _hideCell(state, struckCell);
     struckCell.alive = false;
+    deadCells.push(struckCell);
     changed = true;
     if (struckCell.inSpinMesh) spinDirty = true; else staticDirty = true;
   }
@@ -205,9 +216,20 @@ export function deformAtImpact(
       if (ddx * ddx + ddy * ddy + ddz * ddz < r2) {
         _hideCell(state, cell);
         cell.alive = false;
+        deadCells.push(cell);
         changed = true;
         if (cell.inSpinMesh) spinDirty = true; else staticDirty = true;
       }
+    }
+  }
+
+  if (deadCells.length > 0) {
+    const exposedAndChanged = new Set<CellState>();
+    for (const dc of deadCells) {
+      _exposeNeighbors(state, dc.gx, dc.gy, dc.gz, exposedAndChanged);
+    }
+    for (const ec of exposedAndChanged) {
+      if (ec.inSpinMesh) spinDirty = true; else staticDirty = true;
     }
   }
 
@@ -258,7 +280,7 @@ export function setCockpitVisible(state: VoxelMeshState, visible: boolean): void
     if (cell.zone !== "cockpit") continue;
     if (!cell.alive) continue;
     const targetMesh = cell.inSpinMesh ? state.spinMesh! : state.mesh;
-    if (visible) {
+    if (visible && cell.exposed) {
       _setMatrix(_dummy, cell.gx * s, cell.gy * s, cell.gz * s, gap);
       targetMesh.setMatrixAt(cell.idx, _dummy.matrix);
     } else {
@@ -281,11 +303,15 @@ export function resetVoxelMesh(state: VoxelMeshState): void {
   const gap = s * 0.96;
 
   for (const cell of state.cells.values()) {
-    if (cell.alive) continue;
     cell.alive = true;
+    cell.exposed = DIRS.some(([dx, dy, dz]) => !state.cells.has(cellKey(cell.gx + dx, cell.gy + dy, cell.gz + dz)));
     const targetMesh = cell.inSpinMesh ? state.spinMesh! : state.mesh;
-    _setMatrix(_dummy, cell.gx * s, cell.gy * s, cell.gz * s, gap);
-    targetMesh.setMatrixAt(cell.idx, _dummy.matrix);
+    if (cell.exposed) {
+      _setMatrix(_dummy, cell.gx * s, cell.gy * s, cell.gz * s, gap);
+      targetMesh.setMatrixAt(cell.idx, _dummy.matrix);
+    } else {
+      targetMesh.setMatrixAt(cell.idx, _hiddenMatrix);
+    }
   }
 
   state.spinAngle = 0;
@@ -317,6 +343,30 @@ function _setMatrix(obj: THREE.Object3D, x: number, y: number, z: number, scale:
   obj.scale.setScalar(scale);
   obj.rotation.set(0, 0, 0);
   obj.updateMatrix();
+}
+
+function _exposeNeighbors(state: VoxelMeshState, gx: number, gy: number, gz: number, exposedAndChanged: Set<CellState>) {
+  const s = state.voxelSize;
+  const gap = s * 0.96;
+  for (const [dx, dy, dz] of DIRS) {
+    const nx = gx + dx;
+    const ny = gy + dy;
+    const nz = gz + dz;
+    const neighbor = state.cells.get(cellKey(nx, ny, nz));
+    if (neighbor && neighbor.alive && !neighbor.exposed) {
+      const isExposedNow = DIRS.some(([ndx, ndy, ndz]) => {
+        const neighborNeighbor = state.cells.get(cellKey(nx + ndx, ny + ndy, nz + ndz));
+        return !neighborNeighbor || !neighborNeighbor.alive;
+      });
+      if (isExposedNow) {
+        neighbor.exposed = true;
+        exposedAndChanged.add(neighbor);
+        const targetMesh = neighbor.inSpinMesh ? state.spinMesh! : state.mesh;
+        _setMatrix(_dummy, neighbor.gx * s, neighbor.gy * s, neighbor.gz * s, gap);
+        targetMesh.setMatrixAt(neighbor.idx, _dummy.matrix);
+      }
+    }
+  }
 }
 
 function cellKey(gx: number, gy: number, gz: number): string {

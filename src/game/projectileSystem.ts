@@ -293,7 +293,6 @@ export class ProjectileSystem {
               p.type === WeaponType.ROCKET ? 0.75 : 0;
             callbacks.onVoxelHit(target.id, ProjectileSystem.localOffsetMetersTmp, blastM);
           }
-
           if (callbacks.onHitEnemy) {
             callbacks.onHitEnemy(p.ownerId, target.id, false);
           }
@@ -452,7 +451,6 @@ export class ProjectileSystem {
           const blastAtImpact = 0.3 + falloff * 2.2;
           callbacks.onVoxelHit(p.id, localDir, blastAtImpact);
         }
-
         if (callbacks.onHitEnemy) {
           callbacks.onHitEnemy(ownerId, p.id, false);
         }

@@ -295,7 +295,6 @@ export default function App() {
     } catch (e) {
       console.warn("localStorage persistence error", e);
     }
-
     // Persist to server-side bucket storage asynchronously
     const sid = getMultiplayerSessionId();
     fetch("/api/progression", {
@@ -303,7 +302,6 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId: sid, progression: updated })
     }).catch(e => console.warn("Failed saving progression to server", e));
-
     if (activeEngine) {
       const player = activeEngine.pilots.find(p => p.id === "player");
       if (player) {
@@ -590,10 +588,15 @@ export default function App() {
           else if (msg.type === "player_updated") {
             const remote = engine.pilots.find(p => p.id === msg.id);
             if (remote) {
-              // Snap non-positional state immediately
+              remote.x = msg.state.x;
+              remote.y = msg.state.y;
+              remote.z = msg.state.z;
               remote.vx = msg.state.vx;
               remote.vy = msg.state.vy;
               remote.vz = msg.state.vz;
+              remote.pitch = msg.state.pitch;
+              remote.yaw = msg.state.yaw;
+              remote.roll = msg.state.roll;
               remote.throttle = msg.state.throttle;
               remote.damage = msg.state.damage;
               remote.ammo = msg.state.ammo as typeof remote.ammo;
@@ -626,7 +629,6 @@ export default function App() {
             const lv = new Vector3(msg.lx, msg.ly, msg.lz);
             renderer3D.deformAircraft(msg.targetId, lv, msg.blast);
           }
-
           else if (msg.type === "kill_confirmed") {
             const netToLocal = (id: string) => id === myPilotId ? "player" : id;
             const killer = engine.pilots.find(p => p.id === netToLocal(msg.killerId));
@@ -743,7 +745,6 @@ export default function App() {
         }
       };
     }
-
     engine.onVoxelHit = (targetId, localOffsetMeters, blastMeters) => {
       renderer3D.deformAircraft(targetId, localOffsetMeters, blastMeters);
       if (isMultiplayer && socket?.readyState === WebSocket.OPEN) {
@@ -867,7 +868,6 @@ export default function App() {
     const _netQ = new Quaternion();
     const _netQSnap = new Quaternion();
     const _netEuler = new Euler();
-
     const loop = (now: number) => {
       const dt = Math.min(0.08, (now - lastTime) / 1000);
       lastTime = now;
@@ -1015,7 +1015,6 @@ export default function App() {
           pilot.roll = _netEuler.z;
         }
       }
-
       // Relay coordinates into Three Renderer
       renderer3D.updateWorld(
         engine.pilots,
@@ -1509,7 +1508,6 @@ export default function App() {
           </div>
         </div>
       )}
-
     </main>
   );
 }

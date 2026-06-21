@@ -22,15 +22,7 @@ function fillPolygon(ctx: CanvasRenderingContext2D, ring: number[], size: number
   ctx.fill();
 }
 
-function strokeLine(ctx: CanvasRenderingContext2D, pts: number[], size: number) {
-  if (pts.length < 4) return;
-  ctx.beginPath();
-  ctx.moveTo(pts[0] * size, (1 - pts[1]) * size);
-  for (let i = 2; i < pts.length; i += 2) {
-    ctx.lineTo(pts[i] * size, (1 - pts[i + 1]) * size);
-  }
-  ctx.stroke();
-}
+
 
 export function renderMapGeometry(
   geom:    BakedMapGeometry,
@@ -71,20 +63,8 @@ export function renderMapGeometry(
     fillPolygon(ctx, ring, s);
   }
 
-  // --- Roads ---
-  const scale = s / 512;
-  for (const road of geom.roads) {
-    ctx.strokeStyle = palette.roadColor;
-    switch (road.kind) {
-      case "motorway": ctx.lineWidth = 2.5 * scale; break;
-      case "primary":  ctx.lineWidth = 1.8 * scale; break;
-      case "secondary":ctx.lineWidth = 1.2 * scale; break;
-      case "tertiary": ctx.lineWidth = 0.8 * scale; break;
-      case "track":    ctx.lineWidth = 0.5 * scale; ctx.setLineDash([3 * scale, 4 * scale]); break;
-    }
-    strokeLine(ctx, road.pts, s);
-    ctx.setLineDash([]);
-  }
+  // Roads are rendered as 3D ribbon geometry by ScatterRenderer; omitting them here
+  // prevents duplicate road representations when geom is available.
 
   // --- Runways ---
   ctx.fillStyle = "#94a3b8";
@@ -101,11 +81,12 @@ export function renderMapGeometry(
   }
 
   // --- Port markers ---
+  const portScale = s / 512;
   ctx.fillStyle = "#e2e8f0";
   for (const port of geom.ports) {
     const px = port.x * s, py = (1 - port.y) * s;
     ctx.beginPath();
-    ctx.arc(px, py, 3 * scale, 0, Math.PI * 2);
+    ctx.arc(px, py, 3 * portScale, 0, Math.PI * 2);
     ctx.fill();
   }
 

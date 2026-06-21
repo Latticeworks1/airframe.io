@@ -139,7 +139,13 @@ function buildRoadRibbons(
   geo.setAttribute("normal",   new THREE.BufferAttribute(new Float32Array(normals), 3));
   geo.setIndex(indices);
 
-  return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x64748b, flatShading: false }));
+  return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+    color: 0x64748b,
+    flatShading: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  }));
 }
 
 // ---- ScatterRenderer --------------------------------------------------------
