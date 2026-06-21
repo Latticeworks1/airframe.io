@@ -271,6 +271,22 @@ export function animateSpinCells(
 
 // ---- cockpit visibility ----------------------------------------------------
 
+// Switch the player aircraft material into FPV interior mode. DoubleSide makes
+// back-faces of the exterior shell render at all; the emissive floor ensures
+// faces receiving zero Lambert contribution (back-faces under outside lights)
+// still show their vertex color rather than pure black.
+export function setFPVMaterial(state: VoxelMeshState, fpv: boolean): void {
+  const apply = (mesh: THREE.InstancedMesh) => {
+    const mat = mesh.material as THREE.MeshLambertMaterial;
+    mat.side = fpv ? THREE.DoubleSide : THREE.FrontSide;
+    mat.emissive.setHex(fpv ? 0x0d0b09 : 0x000000);
+    mat.emissiveIntensity = fpv ? 0.6 : 0;
+    mat.needsUpdate = true;
+  };
+  apply(state.mesh);
+  if (state.spinMesh) apply(state.spinMesh);
+}
+
 export function setCockpitVisible(state: VoxelMeshState, visible: boolean): void {
   if (state.cockpitHidden === !visible) return;
 

@@ -43,6 +43,7 @@ import {
   findVoxelImpact,
   animateSpinCells,
   setCockpitVisible,
+  setFPVMaterial,
   resetVoxelMesh,
   VoxelMeshState
 } from "./voxelMesh";
@@ -111,13 +112,20 @@ export class WorldRenderer {
     this.init().then(() => onReady());
   }
 
-  public setCameraMode(mode: CameraMode) {
+  public setCameraMode(mode: CameraMode, playerPilotId?: string) {
     if (this.cameraMode === mode) return;
 
+    const wasFirstPerson = this.cameraMode === "first-person";
+    const willBeFirstPerson = mode === "first-person";
     this.cameraMode = mode;
     this.freeLookYaw = 0;
     this.freeLookPitch = 0;
     this.cameraModeTransitionPending = true;
+
+    if (wasFirstPerson !== willBeFirstPerson && playerPilotId) {
+      const voxState = this.voxelStateMap.get(playerPilotId);
+      if (voxState) setFPVMaterial(voxState, willBeFirstPerson);
+    }
   }
 
   public getRenderStats() {
@@ -1111,10 +1119,11 @@ export class WorldRenderer {
       pGroup.visible = true;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, true);
 
-      // Interior point light: illuminates cockpit voxel cells from inside so
-      // MeshLambertMaterial back-faces are lit rather than appearing black.
+      // Faint green-tinted point at the instrument panel position to simulate
+      // screen glow from avionics displays. Intensity kept low so it doesn't
+      // override the hemisphere sky/ground ambient that provides the main fill.
       if (!this.cockpitLight) {
-        this.cockpitLight = new THREE.PointLight(0xffc87a, 3.2, 7);
+        this.cockpitLight = new THREE.PointLight(0x70ffb0, 0.35, 4);
         this.cockpitLight.castShadow = false;
       }
       if (!this.cockpitLight.parent) this.scene.add(this.cockpitLight);
@@ -1127,7 +1136,9 @@ export class WorldRenderer {
         .add(pGroup.position);
       
       this.camera.position.copy(cockpitPosition);
-      this.cockpitLight.position.copy(cockpitPosition);
+      // Panel glow at instrument panel face: slightly forward and below eye level
+      const panelOffset = new THREE.Vector3(0, -0.25, 1.2).applyQuaternion(pGroup.quaternion);
+      this.cockpitLight.position.copy(pGroup.position).add(panelOffset);
 
       // Calculate looking vector with free look rotation applied on local aircraft coordinate frames
       const localRigidRot = pGroup.quaternion.clone();
