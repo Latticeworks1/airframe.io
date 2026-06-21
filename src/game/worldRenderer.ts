@@ -48,6 +48,14 @@ import {
   VoxelMeshState
 } from "./voxelMesh";
 import { getVoxelDef } from "./content/aircraft/voxelRegistry";
+import {
+  buildInteriorMesh,
+  updateInteriorLive,
+  disposeInteriorMesh,
+  type InteriorDef,
+  type InteriorMeshState
+} from "./voxelInterior";
+import { getInteriorDef } from "./content/aircraft/interiorRegistry";
 import type { Vector3 } from "three";
 
 
@@ -65,6 +73,7 @@ export class WorldRenderer {
   private cockpitLight: THREE.PointLight | null = null;
   private aircraftGroupMap = new Map<string, THREE.Group>();
   private voxelStateMap = new Map<string, VoxelMeshState>();
+  private interiorStateMap = new Map<string, { state: InteriorMeshState; def: InteriorDef }>();
   private cloudField: CloudField | null = null;
   private islands: THREE.Mesh[] = [];
   private carriers: THREE.Group[] = [];
@@ -724,6 +733,15 @@ export class WorldRenderer {
           group.add(state.mesh);
           if (state.spinMesh) group.add(state.spinMesh);
           this.voxelStateMap.set(p.id, state);
+
+          // Build interior mesh for this aircraft if a def exists.
+          // Starts hidden; WorldRenderer.updateCamera shows it only in FPV.
+          const intDef = getInteriorDef(p.specs.id);
+          if (intDef) {
+            const intState = buildInteriorMesh(intDef);
+            group.add(intState.mesh);
+            this.interiorStateMap.set(p.id, { state: intState, def: intDef });
+          }
         } else {
           group = this.generateProceduralAircraft(
             p.specs.id,
@@ -810,6 +828,11 @@ export class WorldRenderer {
         if (voxState) {
           disposeVoxelMesh(voxState);
           this.voxelStateMap.delete(cachedId);
+        }
+        const intEntry = this.interiorStateMap.get(cachedId);
+        if (intEntry) {
+          disposeInteriorMesh(intEntry.state);
+          this.interiorStateMap.delete(cachedId);
         }
       }
     }
@@ -1092,6 +1115,8 @@ export class WorldRenderer {
 
     if (this.cameraMode === "bombsight") {
       if (this.cockpitLight?.parent) this.scene.remove(this.cockpitLight);
+      const intEntry3 = this.interiorStateMap.get(playerPilotId);
+      if (intEntry3) intEntry3.state.mesh.visible = false;
       pGroup.visible = false;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, false);
 
@@ -1136,9 +1161,15 @@ export class WorldRenderer {
         .add(pGroup.position);
       
       this.camera.position.copy(cockpitPosition);
-      // Panel glow at instrument panel face: slightly forward and below eye level
       const panelOffset = new THREE.Vector3(0, -0.25, 1.2).applyQuaternion(pGroup.quaternion);
       this.cockpitLight.position.copy(pGroup.position).add(panelOffset);
+
+      // Show interior mesh and update live cells (throttle grip, alt strip).
+      const intEntry = this.interiorStateMap.get(playerPilotId);
+      if (intEntry) {
+        intEntry.state.mesh.visible = true;
+        updateInteriorLive(intEntry.state, intEntry.def, playerPilot.throttle, playerPilot.y);
+      }
 
       // Calculate looking vector with free look rotation applied on local aircraft coordinate frames
       const localRigidRot = pGroup.quaternion.clone();
@@ -1153,6 +1184,8 @@ export class WorldRenderer {
       this.camera.lookAt(lookTarget);
     } else {
       if (this.cockpitLight?.parent) this.scene.remove(this.cockpitLight);
+      const intEntry2 = this.interiorStateMap.get(playerPilotId);
+      if (intEntry2) intEntry2.state.mesh.visible = false;
       pGroup.visible = true;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, false);
 
