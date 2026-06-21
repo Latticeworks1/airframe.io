@@ -37,6 +37,13 @@ import { Award, Trophy, ArrowRight } from "lucide-react";
 const STORAGE_KEY = "airframe_io_save_data";
 const MULTIPLAYER_SESSION_KEY = "airframe_io_multiplayer_session";
 
+const GHOST_PREFIXES = ["GHOST","RAVEN","VIPER","COBRA","EAGLE","SHARK","STORM","BLADE","IRON","WOLF","NOVA","APEX","ZERO","JADE","ONYX","LYNX","KITE","HAWK","FURY","FLAK"];
+function generateCallsign(): string {
+  const prefix = GHOST_PREFIXES[Math.floor(Math.random() * GHOST_PREFIXES.length)];
+  const num = 1000 + Math.floor(Math.random() * 8999);
+  return `${prefix}_${num}`;
+}
+
 function getMultiplayerSessionId(): string {
   const existing = localStorage.getItem(MULTIPLAYER_SESSION_KEY);
   if (existing) return existing;
@@ -185,21 +192,24 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hitmarker.key]);
 
-  // Load persistence
+  // Load persistence — auto-assign callsign so registration is never a gate
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        // Safely complete any missing keys
-        setProgression({
-          ...INITIAL_PROGRESSION,
-          ...parsed,
-          stats: { ...INITIAL_PROGRESSION.stats, ...(parsed.stats || {}) },
-          equippedMods: parsed.equippedMods || {},
-          unlockedPlanes: parsed.unlockedPlanes || ["falcon-mk2"]
-        });
+      const parsed = raw ? JSON.parse(raw) : null;
+      const base: UserProgression = {
+        ...INITIAL_PROGRESSION,
+        ...(parsed ?? {}),
+        stats: { ...INITIAL_PROGRESSION.stats, ...(parsed?.stats || {}) },
+        equippedMods: parsed?.equippedMods || {},
+        unlockedPlanes: parsed?.unlockedPlanes || ["falcon-mk2"]
+      };
+      if (!base.nickname) {
+        base.nickname = generateCallsign();
+        base.rankCode = base.rankCode || "CDT";
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
       }
+      setProgression(base);
     } catch (e) {
       console.warn("Failed loading progression save state", e);
     }
@@ -1238,15 +1248,15 @@ export default function App() {
         </div>
       )}
 
-      {/* PILOT REGISTRATION AND DATABASE SYNC OVERLAY */}
-      {(!isPlaying && !showDebrief && (!progression.nickname || showRegistration)) && (
+      {/* PILOT REGISTRATION — opt-in via PROFILE button, never a gate */}
+      {(!isPlaying && !showDebrief && showRegistration) && (
         <PilotRegistration
           progression={progression}
           onComplete={(updated) => {
             saveProgression(updated);
             setShowRegistration(false);
           }}
-          onClose={progression.nickname ? () => setShowRegistration(false) : undefined}
+          onClose={() => setShowRegistration(false)}
         />
       )}
 
