@@ -46,9 +46,10 @@ export class BotAISystem {
 
       if (health < 0.45 && bot.aiState.behavior !== "rtb") {
         bot.aiState.behavior = "rtb";
-        bot.aiState.destinationX = bot.team === 1 ? -4000 : 4000;
-        bot.aiState.destinationY = 280;
-        bot.aiState.destinationZ = bot.team === 1 ? -3000 : 3000;
+        // RTB toward own carrier side rather than map center
+        bot.aiState.destinationX = bot.team === 1 ? -14000 : 14000;
+        bot.aiState.destinationY = 600;
+        bot.aiState.destinationZ = bot.team === 1 ? -8000 : 8000;
         return;
       }
 
@@ -80,7 +81,7 @@ export class BotAISystem {
           }
         });
 
-        if (closest && minDist < 8000) {
+        if (closest && minDist < 14000) {
           bot.aiState.behavior = "dogfight";
           bot.aiState.targetId = closest.id;
         } else {
@@ -147,17 +148,16 @@ export class BotAISystem {
     }
 
     if (bot.aiState.behavior === "patrol") {
-      if (skyZones.length > 0) {
-        const activeZone = skyZones[0];
-        bot.aiState.destinationX = activeZone.x + Math.sin(Date.now() / 1500) * 150;
-        bot.aiState.destinationY = activeZone.y + 80;
-        bot.aiState.destinationZ = activeZone.z + Math.cos(Date.now() / 1500) * 150;
-        bot.throttle = 0.8;
-      } else {
-        bot.aiState.destinationX = 0;
-        bot.aiState.destinationY = 500;
-        bot.aiState.destinationZ = 0;
-      }
+      // Each bot gets a unique patrol bearing derived from its id hash so they
+      // spread across the neutral zone rather than converging on one point.
+      const seed = bot.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+      const angle = (seed % 8) * (Math.PI / 4);
+      const patrolR = 4000 + (seed % 3) * 2000;
+      const t = Date.now() / 8000;
+      bot.aiState.destinationX = Math.cos(angle + t) * patrolR;
+      bot.aiState.destinationY = 400 + (seed % 5) * 80;
+      bot.aiState.destinationZ = Math.sin(angle + t) * patrolR;
+      bot.throttle = 0.75;
 
       return;
     }

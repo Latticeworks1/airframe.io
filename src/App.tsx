@@ -12,7 +12,6 @@ import {
   KillEvent,
   ControlMode,
   SkyZone,
-  LeadIndicatorInfo,
   CameraMode,
   BombSightInfo,
   CampaignMissionState,
@@ -109,6 +108,7 @@ export default function App() {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const renderer3DRef = useRef<WorldRenderer | null>(null);
   const inputManagerRef = useRef<InputManager | null>(null);
+  const activeEngineRef = useRef<GameEngine | null>(null);
   const [activeEngine, setActiveEngine] = useState<GameEngine | null>(null);
 
   // POV and Lead Targeting State
@@ -137,6 +137,8 @@ export default function App() {
   });
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [killPopups, setKillPopups] = useState<Array<{ key: number; value: number }>>([]);
+  const killPopupKeyRef = useRef(0);
   const multiplayerSocketRef = useRef<WebSocket | null>(null);
 
   const [isPaused, setIsPaused] = useState(false);
@@ -164,6 +166,10 @@ export default function App() {
   };
 
   const toggleBombSight = () => {
+    const player = activeEngineRef.current?.pilots.find(p => p.id === "player");
+    const canUseBombSight = cameraModeRef.current === "bombsight" ||
+      (player && player.specs.weapons.includes(WeaponType.BOMB) && (player.ammo[WeaponType.BOMB] ?? 0) > 0);
+    if (!canUseBombSight) return;
     setActiveCameraMode(
       cameraModeRef.current === "bombsight"
         ? "third-person"
@@ -184,10 +190,25 @@ export default function App() {
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
       if (e.key === "Escape") {
         if (isPlaying) {
           e.preventDefault();
           togglePause();
+        }
+      }
+      // Delete: self-destruct when stuck (wings gone or aircraft stranded on ground)
+      if (e.key === "Delete" && isPlaying) {
+        const eng = activeEngineRef.current;
+        if (!eng) return;
+        const player = eng.pilots.find(p => p.id === "player");
+        if (player && player.damage.fuselage > 0) {
+          const speed = Math.sqrt(player.vx ** 2 + player.vy ** 2 + player.vz ** 2);
+          const wingsGone = player.damage.leftWing <= 0 || player.damage.rightWing <= 0;
+          if (wingsGone || speed < 5) {
+            player.damage.fuselage = 0;
+            player.damage.engine = 0;
+          }
         }
       }
     };
@@ -386,9 +407,12 @@ export default function App() {
       mapId,
       mode,
       (killEvt) => {
-        // Trigger small audio click or visual shaking if player got kill
         if (killEvt.killerName.includes("You")) {
           try { beep(440, "triangle", 0.08); } catch(_) {}
+          const score = killEvt.method === "Heavy Ordnance" ? 200 : 300;
+          const key = ++killPopupKeyRef.current;
+          setKillPopups(prev => [...prev, { key, value: score }]);
+          setTimeout(() => setKillPopups(prev => prev.filter(p => p.key !== key)), 1600);
         }
       },
       (victory, xpEarned) => {
@@ -431,6 +455,7 @@ export default function App() {
     }
 
     setActiveEngine(engine);
+    activeEngineRef.current = engine;
 
     // 3. Setup control structures using the InputManager class
     const inputManager = new InputManager();
@@ -561,6 +586,8 @@ export default function App() {
           else if (msg.type === "player_joined") {
             const player = msg.player;
             if (player.id !== myPilotId && !engine.pilots.some(p => p.id === player.id)) {
+              // Host displaces a bot to make room for the real player
+              if (engine.isHost) engine.removeBot(player.team);
               engine.pilots.push({
                 id: player.id,
                 name: player.name,
@@ -616,6 +643,8 @@ export default function App() {
 
           else if (msg.type === "player_left") {
             engine.pilots = engine.pilots.filter(p => p.id !== msg.id);
+            // Host fills the vacated slot with a bot
+            if (engine.isHost && msg.team) engine.addBot(msg.team as 1 | 2);
           }
 
           else if (msg.type === "player_fired") {
@@ -814,56 +843,6 @@ export default function App() {
     };
     const telemFlushInterval = setInterval(flushTelemetry, 100);
 
-    let leadHudElements: {
-      target: HTMLElement;
-      lead: HTMLElement;
-      distance: HTMLElement;
-      lock: HTMLElement;
-      lockText: HTMLElement;
-    } | null = null;
-
-    const updateLeadHud = (indicator: LeadIndicatorInfo | null) => {
-      if (!leadHudElements) {
-        const target = document.getElementById("target-marker-box");
-        const lead = document.getElementById("target-lead-dot-indicator");
-        const distance = document.getElementById("target-lead-distance");
-        const lock = document.getElementById("hud-radar-lock");
-        const lockText = document.getElementById("hud-radar-lock-text");
-
-        if (target && lead && distance && lock && lockText) {
-          leadHudElements = { target, lead, distance, lock, lockText };
-        }
-      }
-
-      if (!leadHudElements) return;
-
-      const { target, lead, distance, lock, lockText } = leadHudElements;
-      if (!indicator) {
-        target.style.opacity = "0";
-        lead.style.opacity = "0";
-        lock.style.opacity = "0";
-        return;
-      }
-
-      const targetX = Math.max(0, Math.min(100, indicator.x));
-      const targetY = Math.max(0, Math.min(100, indicator.y));
-      const leadX = Math.max(0, Math.min(100, indicator.sX));
-      const leadY = Math.max(0, Math.min(100, indicator.sY));
-      const scale = Math.max(0.5, Math.min(1.5, 650 / (indicator.distance + 250)));
-
-      target.style.opacity = "1";
-      lead.style.opacity = "1";
-      lock.style.opacity = "1";
-      target.style.transform =
-        `translate3d(${targetX}vw, ${targetY}vh, 0) translate3d(-50%, -50%, 0)`;
-      lead.style.transform =
-        `translate3d(${leadX}vw, ${leadY}vh, 0) translate3d(-50%, -50%, 0) scale(${scale})`;
-      distance.textContent = indicator.distance >= 1000
-        ? `${(indicator.distance / 1000).toFixed(1)}KM`
-        : `${Math.floor(indicator.distance)}M`;
-      lockText.textContent = `RADAR TRACER LOCK • ${indicator.name}`;
-    };
-
     // Reusable objects for remote interpolation — allocated once to avoid GC pressure
     const _netQ = new Quaternion();
     const _netQSnap = new Quaternion();
@@ -1027,8 +1006,6 @@ export default function App() {
         inputFrame,
         dt
       );
-      updateLeadHud(renderer3D.leadIndicator2D);
-
       fpsFrameCount++;
       const fpsElapsed = now - fpsWindowStart;
       if (fpsElapsed >= 500) {
@@ -1291,6 +1268,7 @@ export default function App() {
             mapId={activeEngine.selectedMapId}
             showTacticalMap={showTacticalMap}
             onCloseTacticalMap={() => setShowTacticalMap(false)}
+            killPopups={killPopups}
             chatMessages={chatMessages}
             onSendChat={(text) => {
               const sock = multiplayerSocketRef.current;
@@ -1312,93 +1290,84 @@ export default function App() {
         </div>
       )}
 
-      {/* TACTICAL PAUSE OVERLAY */}
-      {isPlaying && isPaused && (
-        <div id="tactical-pause-overlay" className="absolute inset-0 z-50 bg-[#070b14]/85 backdrop-blur-md flex flex-col items-center justify-center p-6 pointer-events-auto font-mono text-center animate-fadeIn">
-          <div className="max-w-md w-full bg-[#0d1525]/90 border border-slate-900 rounded-2xl p-8 shadow-2xl shadow-black/95">
-            <span className="text-[10px] text-amber-500 font-extrabold tracking-[0.25em] uppercase block mb-1">SYSTEM HALTED</span>
-            <h1 className="text-3xl font-black text-slate-100 tracking-tight uppercase mb-6" style={{ textShadow: "1.5px 1.5px 0px #000, -1.5px -1.5px 0px #000, 1.5px -1.5px 0px #000, -1.5px 1.5px 0px #000" }}>
-              TACTICAL PAUSE
-            </h1>
-            
-            <div className="flex flex-col gap-3 mb-8 text-left">
-              <span className="text-[9px] text-[#475569] font-black uppercase tracking-wider mb-1">JET CONTROL TUNEMENT</span>
-              
-              {/* Invert Mouse Y Toggle */}
-              <button
-                type="button"
-                onClick={() => {
-                  const updated = {
-                    ...progression,
-                    invertMouseY: !progression.invertMouseY
-                  };
-                  saveProgression(updated);
-                  if (activeEngine) {
-                    const player = activeEngine.pilots.find(p => p.id === "player");
-                    if (player) {
-                      player.invertMouseY = updated.invertMouseY ?? false;
-                    }
-                  }
-                }}
-                className="flex items-center justify-between px-4 py-2.5 bg-slate-950/60 border border-slate-900 hover:border-slate-800 rounded-xl text-xs font-bold transition-all text-slate-350 cursor-pointer"
-              >
-                <span>INVERT MOUSE PITCH (Y-AXIS)</span>
-                <span className={progression.invertMouseY ? "text-amber-500 font-black" : "text-slate-500 font-bold"}>
-                  {progression.invertMouseY ? "ON" : "OFF"}
-                </span>
-              </button>
-
-              {/* Invert Mouse X Toggle */}
-              <button
-                type="button"
-                onClick={() => {
-                  const updated = {
-                    ...progression,
-                    invertMouseX: !progression.invertMouseX
-                  };
-                  saveProgression(updated);
-                  if (activeEngine) {
-                    const player = activeEngine.pilots.find(p => p.id === "player");
-                    if (player) {
-                      player.invertMouseX = updated.invertMouseX ?? false;
-                    }
-                  }
-                }}
-                className="flex items-center justify-between px-4 py-2.5 bg-slate-950/60 border border-slate-900 hover:border-slate-800 rounded-xl text-xs font-bold transition-all text-slate-350 cursor-pointer"
-              >
-                <span>INVERT MOUSE ROLL (X-AXIS)</span>
-                <span className={progression.invertMouseX ? "text-amber-500 font-black" : "text-slate-500 font-bold"}>
-                  {progression.invertMouseX ? "ON" : "OFF"}
-                </span>
-              </button>
+      {/* PAUSE / SCOREBOARD OVERLAY */}
+      {isPlaying && isPaused && (() => {
+        const allPilots = hudSnapshot.pilots;
+        const renderTeam = (team: 1 | 2) => {
+          const color = team === 1 ? { hdr: "text-rose-400", border: "border-rose-500/25", row: "bg-rose-950/10" } : { hdr: "text-sky-400", border: "border-sky-500/25", row: "bg-sky-950/10" };
+          const teamScore = team === 1 ? hudSnapshot.team1Score : hudSnapshot.team2Score;
+          const pilots = [...allPilots].filter(p => p.team === team).sort((a, b) => b.score - a.score);
+          return (
+            <div key={team} className="flex-1 min-w-0">
+              <div className={`flex items-center justify-between pb-1.5 mb-2 border-b ${color.border}`}>
+                <span className={`text-[9px] font-black tracking-[0.2em] uppercase ${color.hdr}`}>Team {team}</span>
+                <span className={`text-[11px] font-black font-mono ${color.hdr}`}>{teamScore}</span>
+              </div>
+              <div className="text-[7px] text-slate-600 font-mono tracking-wider grid grid-cols-[1fr_24px_24px_36px_40px] gap-x-2 px-1 mb-1">
+                <span>PILOT</span><span className="text-right">K</span><span className="text-right">D</span><span className="text-right">KDR</span><span className="text-right">SCR</span>
+              </div>
+              {pilots.map(p => {
+                const isMe = p.id === "player";
+                const kdr = p.deaths === 0 ? p.kills.toFixed(0) : (p.kills / p.deaths).toFixed(2);
+                const nameStyle = isMe ? "text-amber-300 font-black" : p.isBot ? "text-slate-500" : "text-slate-200 font-bold";
+                return (
+                  <div key={p.id} className={`grid grid-cols-[1fr_24px_24px_36px_40px] gap-x-2 px-1 py-0.5 rounded text-[8px] font-mono ${isMe ? "bg-amber-950/30" : p.isBot ? "" : color.row}`}>
+                    <span className={`truncate ${nameStyle}`}>{p.name}{p.isBot ? "" : " ★"}</span>
+                    <span className="text-right text-slate-300">{p.kills}</span>
+                    <span className="text-right text-slate-400">{p.deaths}</span>
+                    <span className="text-right text-slate-400">{kdr}</span>
+                    <span className={`text-right font-black ${isMe ? "text-amber-300" : "text-slate-300"}`}>{p.score}</span>
+                  </div>
+                );
+              })}
             </div>
+          );
+        };
+        return (
+          <div id="tactical-pause-overlay" className="absolute inset-0 z-50 bg-[#050a12]/88 backdrop-blur-md flex items-start justify-center pt-10 px-4 pointer-events-auto font-mono animate-fadeIn overflow-y-auto">
+            <div className="w-full max-w-5xl">
+              {/* Header */}
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <span className="text-[9px] text-amber-500 font-extrabold tracking-[0.25em] uppercase block">GAME PAUSED</span>
+                  <span className="text-[11px] text-slate-400 font-mono">{hudSnapshot.pilots.filter(p => !p.isBot).length} real players · {hudSnapshot.pilots.filter(p => p.isBot).length} bots</span>
+                </div>
+                <button type="button" onClick={togglePause} className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-black tracking-widest uppercase rounded-lg cursor-pointer">
+                  RESUME [ESC]
+                </button>
+              </div>
 
-            <div className="flex flex-col gap-3">
-              {/* RESUME BUTTON */}
-              <button
-                type="button"
-                onClick={togglePause}
-                className="w-full py-3 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black tracking-widest uppercase rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer"
-              >
-                RESUME FLIGHT
-              </button>
-              
-              {/* QUIT BUTTON */}
-              <button
-                type="button"
-                onClick={handleEject}
-                className="w-full py-3 px-4 bg-black/40 hover:bg-red-950/30 border border-slate-900 hover:border-red-900/40 text-red-400 text-xs font-black tracking-widest uppercase rounded-xl transition-all active:scale-95 cursor-pointer"
-              >
-                QUIT MATCH
-              </button>
+              {/* Scoreboard */}
+              <div className="flex gap-6 mb-6">
+                {renderTeam(1)}
+                <div className="w-px bg-slate-800" />
+                {renderTeam(2)}
+              </div>
+
+              {/* Settings row */}
+              <div className="border-t border-slate-800 pt-4 flex flex-wrap gap-3 items-center justify-between">
+                <div className="flex gap-3 flex-wrap">
+                  <button type="button"
+                    onClick={() => { const u = { ...progression, invertMouseY: !progression.invertMouseY }; saveProgression(u); if (activeEngine) { const pl = activeEngine.pilots.find(p => p.id === "player"); if (pl) pl.invertMouseY = u.invertMouseY ?? false; } }}
+                    className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-[9px] font-black cursor-pointer"
+                  >
+                    PITCH INVERT: <span className={progression.invertMouseY ? "text-amber-400" : "text-slate-500"}>{progression.invertMouseY ? "ON" : "OFF"}</span>
+                  </button>
+                  <button type="button"
+                    onClick={() => { const u = { ...progression, invertMouseX: !progression.invertMouseX }; saveProgression(u); if (activeEngine) { const pl = activeEngine.pilots.find(p => p.id === "player"); if (pl) pl.invertMouseX = u.invertMouseX ?? false; } }}
+                    className="px-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-[9px] font-black cursor-pointer"
+                  >
+                    ROLL INVERT: <span className={progression.invertMouseX ? "text-amber-400" : "text-slate-500"}>{progression.invertMouseX ? "ON" : "OFF"}</span>
+                  </button>
+                </div>
+                <button type="button" onClick={handleEject} className="px-4 py-2 border border-red-900/50 text-red-400 text-[9px] font-black rounded-lg hover:bg-red-950/30 cursor-pointer">
+                  QUIT MATCH
+                </button>
+              </div>
             </div>
-            
-            <p className="text-[8px] text-slate-500 uppercase mt-4 tracking-wider">
-              Press [ESC] to instantly resume flight
-            </p>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* HANGAR LOBBY MAIN MENU DASHBOARD */}
       {!isPlaying && !showDebrief && (

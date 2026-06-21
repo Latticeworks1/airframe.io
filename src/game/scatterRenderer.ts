@@ -158,13 +158,21 @@ export class ScatterRenderer {
     scene: THREE.Scene,
     mapDef: MapDefinition,
     layout: TerrainLayout,
-    geom?: BakedMapGeometry
+    geom?: BakedMapGeometry,
+    scatterScale = 1.0,
+    shadows = true
   ) {
     this.scene = scene;
-    this.build(mapDef, layout, geom);
+    this.build(mapDef, layout, geom, scatterScale, shadows);
   }
 
-  private build(mapDef: MapDefinition, layout: TerrainLayout, geom?: BakedMapGeometry) {
+  private build(
+    mapDef: MapDefinition,
+    layout: TerrainLayout,
+    geom?: BakedMapGeometry,
+    scatterScale = 1.0,
+    shadows = true
+  ) {
     const rand = mulberry32(mapDef.seed ^ 0xdeadbeef);
     const R    = mapDef.world.radius;
     const D    = R * 2;
@@ -213,19 +221,26 @@ export class ScatterRenderer {
       }
     }
 
+    const maxPines = Math.max(1, Math.floor(MAX_PINES * scatterScale));
+    const maxBroadleaf = Math.max(1, Math.floor(MAX_BROADLEAF * scatterScale));
+    const maxBuildings = Math.max(1, Math.floor(MAX_BUILDINGS * scatterScale));
+
     // --- Pine trees ---
     const pineGeo = makePineGeo();
     const pineMat = new THREE.MeshLambertMaterial({ color: 0x2d5a1b, flatShading: true });
-    const pineMesh = new THREE.InstancedMesh(pineGeo, pineMat, MAX_PINES);
+    const pineMesh = new THREE.InstancedMesh(pineGeo, pineMat, maxPines);
     pineMesh.count = 0;
-    pineMesh.castShadow = false;
+    pineMesh.castShadow = shadows;
+    pineMesh.receiveShadow = shadows;
     this.scene.add(pineMesh);
     this.meshes.push(pineMesh);
 
     const broadGeo = makeBroadleafGeo();
     const broadMat = new THREE.MeshLambertMaterial({ color: 0x3a7d2c, flatShading: true });
-    const broadMesh = new THREE.InstancedMesh(broadGeo, broadMat, MAX_BROADLEAF);
+    const broadMesh = new THREE.InstancedMesh(broadGeo, broadMat, maxBroadleaf);
     broadMesh.count = 0;
+    broadMesh.castShadow = shadows;
+    broadMesh.receiveShadow = shadows;
     this.scene.add(broadMesh);
     this.meshes.push(broadMesh);
 
@@ -233,7 +248,7 @@ export class ScatterRenderer {
     let pineCount = 0, broadCount = 0;
 
     // Generate tree candidates
-    const totalTrees = MAX_PINES + MAX_BROADLEAF;
+    const totalTrees = maxPines + maxBroadleaf;
     const candidatesPerZone = forestZones.length > 0
       ? Math.ceil(totalTrees * 1.5 / forestZones.length)
       : 0;
@@ -271,9 +286,9 @@ export class ScatterRenderer {
           ? rand() < 0.85
           : rand() < 0.55;
 
-        if (isPine && pineCount < MAX_PINES) {
+        if (isPine && pineCount < maxPines) {
           pineMesh.setMatrixAt(pineCount++, dummy.matrix);
-        } else if (!isPine && broadCount < MAX_BROADLEAF) {
+        } else if (!isPine && broadCount < maxBroadleaf) {
           broadMesh.setMatrixAt(broadCount++, dummy.matrix);
         }
       }
@@ -288,17 +303,19 @@ export class ScatterRenderer {
     if (urbanZones.length > 0 || geom?.landUse.some(lu => lu.kind === "urban")) {
       const bldGeo  = new THREE.BoxGeometry(1, 1, 1);
       const bldMat  = new THREE.MeshLambertMaterial({ color: 0x94a3b8, flatShading: true });
-      const bldMesh = new THREE.InstancedMesh(bldGeo, bldMat, MAX_BUILDINGS);
+      const bldMesh = new THREE.InstancedMesh(bldGeo, bldMat, maxBuildings);
       bldMesh.count = 0;
+      bldMesh.castShadow = shadows;
+      bldMesh.receiveShadow = shadows;
       this.scene.add(bldMesh);
       this.meshes.push(bldMesh);
 
       let bldCount = 0;
       const zones = urbanZones.length > 0 ? urbanZones : forestZones.slice(0, 3);
-      const perZone = Math.ceil(MAX_BUILDINGS / zones.length);
+      const perZone = Math.ceil(maxBuildings / zones.length);
 
       for (const zone of zones) {
-        for (let i = 0; i < perZone && bldCount < MAX_BUILDINGS; i++) {
+        for (let i = 0; i < perZone && bldCount < maxBuildings; i++) {
           const angle = rand() * Math.PI * 2;
           const dist  = Math.sqrt(rand()) * zone.r * 0.6;
           const wx = zone.cx + Math.cos(angle) * dist;

@@ -393,4 +393,5 @@ export interface LeadIndicatorInfo {
   sY: number;     // lead dot screen Y % (0-100)
   name: string;   // pilot name
   distance: number; // distance in meters
+  isBot: boolean;
 }

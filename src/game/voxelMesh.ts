@@ -44,7 +44,7 @@ const _col = new THREE.Color();
 
 // ---- builder ---------------------------------------------------------------
 
-export function buildVoxelMesh(def: VoxelAircraftDef): VoxelMeshState {
+export function buildVoxelMesh(def: VoxelAircraftDef, shadows = true): VoxelMeshState {
   const grid = new Set<string>(def.cells.map(c => cellKey(c.gx, c.gy, c.gz)));
 
   // Include all authored cells rather than filtering/culling internal cells at startup.
@@ -56,23 +56,23 @@ export function buildVoxelMesh(def: VoxelAircraftDef): VoxelMeshState {
 
   // Main mesh — static cells
   const mesh = new THREE.InstancedMesh(geo, mat, staticSurface.length);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.castShadow = shadows;
+  mesh.receiveShadow = shadows;
   mesh.count = staticSurface.length;
 
   // Spin mesh — separate so only these ~23 matrices upload every frame
   let spinMesh: THREE.InstancedMesh | null = null;
   if (spinSurface.length > 0) {
     spinMesh = new THREE.InstancedMesh(geo.clone(), mat.clone(), spinSurface.length);
-    spinMesh.castShadow = true;
-    spinMesh.receiveShadow = true;
+    spinMesh.castShadow = shadows;
+    spinMesh.receiveShadow = shadows;
     spinMesh.count = spinSurface.length;
   }
 
   const cells = new Map<string, CellState>();
   const spinCells: VoxelMeshState["spinCells"] = [];
   const s = def.voxelSize;
-  const gap = s * 0.96;
+  const gap = s;
 
   for (let i = 0; i < staticSurface.length; i++) {
     const c = staticSurface[i];
@@ -251,7 +251,7 @@ export function animateSpinCells(
   state.spinAngle += (15 + throttle * 40) * dt;
 
   const s = state.voxelSize;
-  const gap = s * 0.96;
+  const gap = s;
   const cos = Math.cos(state.spinAngle);
   const sin = Math.sin(state.spinAngle);
   let dirty = false;
@@ -275,7 +275,7 @@ export function setCockpitVisible(state: VoxelMeshState, visible: boolean): void
   if (state.cockpitHidden === !visible) return;
 
   const s = state.voxelSize;
-  const gap = s * 0.96;
+  const gap = s;
   let changed = false;
 
   for (const cell of state.cells.values()) {
@@ -302,7 +302,7 @@ export function setCockpitVisible(state: VoxelMeshState, visible: boolean): void
 
 export function resetVoxelMesh(state: VoxelMeshState): void {
   const s = state.voxelSize;
-  const gap = s * 0.96;
+  const gap = s;
 
   for (const cell of state.cells.values()) {
     cell.alive = true;
@@ -349,7 +349,7 @@ function _setMatrix(obj: THREE.Object3D, x: number, y: number, z: number, scale:
 
 function _exposeNeighbors(state: VoxelMeshState, gx: number, gy: number, gz: number, exposedAndChanged: Set<CellState>) {
   const s = state.voxelSize;
-  const gap = s * 0.96;
+  const gap = s;
   for (const [dx, dy, dz] of DIRS) {
     const nx = gx + dx;
     const ny = gy + dy;

@@ -141,7 +141,7 @@ export class WorldRenderer {
       skyEnvironment.fogFar
     );
 
-    this.camera = new THREE.PerspectiveCamera(65, width / height, 1, 15000);
+    this.camera = new THREE.PerspectiveCamera(65, width / height, 1, 65000);
     this.camera.position.set(0, 200, 300);
 
     const hasWebGPU = typeof navigator !== "undefined" && !!(navigator as any).gpu;
@@ -874,7 +874,8 @@ export class WorldRenderer {
           sX: (pLead.x * 0.5 + 0.5) * 100,
           sY: (-pLead.y * 0.5 + 0.5) * 100,
           name: adv.name,
-          distance: Math.round(lockedDist)
+          distance: Math.round(lockedDist),
+          isBot: adv.isBot ?? true
         };
       } else {
         this.leadIndicator2D = null;
@@ -882,6 +883,8 @@ export class WorldRenderer {
     } else {
       this.leadIndicator2D = null;
     }
+
+    this.syncLeadHud();
 
     if (this.skyDome) {
       updateSkyDome(
@@ -1508,6 +1511,48 @@ export class WorldRenderer {
         this.listProjectiles.splice(i, 1);
       }
     }
+  }
+
+  private _leadEls: {
+    target: HTMLElement;
+    lead: HTMLElement;
+    distance: HTMLElement;
+    dot: HTMLElement | null;
+  } | null = null;
+
+  private syncLeadHud() {
+    if (!this._leadEls) {
+      const target   = document.getElementById("target-marker-box");
+      const lead     = document.getElementById("target-lead-dot-indicator");
+      const distance = document.getElementById("target-lead-distance");
+      if (target && lead && distance) {
+        this._leadEls = {
+          target, lead, distance,
+          dot: document.getElementById("target-lead-center-dot")
+        };
+      }
+    }
+    if (!this._leadEls) return;
+    const { target, lead, distance, dot } = this._leadEls;
+    const ind = this.leadIndicator2D;
+    if (!ind) {
+      target.style.opacity = "0";
+      lead.style.opacity = "0";
+      return;
+    }
+    const tx = Math.max(0, Math.min(100, ind.x));
+    const ty = Math.max(0, Math.min(100, ind.y));
+    const lx = Math.max(0, Math.min(100, ind.sX));
+    const ly = Math.max(0, Math.min(100, ind.sY));
+    const scale = Math.max(0.5, Math.min(1.5, 650 / (ind.distance + 250)));
+    target.style.opacity = "1";
+    lead.style.opacity = "1";
+    target.style.transform = `translate3d(${tx}vw,${ty}vh,0) translate3d(-50%,-50%,0)`;
+    lead.style.transform   = `translate3d(${lx}vw,${ly}vh,0) translate3d(-50%,-50%,0) scale(${scale})`;
+    distance.textContent = ind.distance >= 1000
+      ? `${(ind.distance / 1000).toFixed(1)}KM`
+      : `${Math.floor(ind.distance)}M`;
+    if (dot) dot.style.backgroundColor = ind.isBot ? "#94a3b8" : "#ef4444";
   }
 }
 

@@ -190,10 +190,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   };
 
   const availableTheaters = [
-    { id: KnownMaps.IslandChain,  mode: MatchMode.AirSupremacy },
-    { id: KnownMaps.StormFront,   mode: MatchMode.Intercept    },
-    { id: KnownMaps.DesertCanyon, mode: MatchMode.DuelArena    },
-    { id: KnownMaps.AlpineValley, mode: MatchMode.AirSupremacy }
+    { id: KnownMaps.IslandChain, mode: MatchMode.AirSupremacy },
   ];
 
   const handleCycleMap = (direction: number) => {
@@ -378,35 +375,41 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                        : selectedMode.toUpperCase();
         return (
           <>
-            {/* Left arrow */}
-            <div className="absolute left-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
-              <button
-                type="button"
-                onClick={(event) => { event.stopPropagation(); handleCycleMap(-1); }}
-                aria-label="Previous map"
-                className="group flex items-center justify-center w-16 h-16 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)]"
-              >
-                <ChevronLeft size={32} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
-              </button>
-            </div>
+            {/* Left arrow — only rendered when more than one theater is available */}
+            {availableTheaters.length > 1 && (
+              <div className="absolute left-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
+                <button
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); handleCycleMap(-1); }}
+                  aria-label="Previous map"
+                  className="group flex items-center justify-center w-16 h-16 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)]"
+                >
+                  <ChevronLeft size={32} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
+                </button>
+              </div>
+            )}
 
-            {/* Right arrow */}
-            <div className="absolute right-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
-              <button
-                type="button"
-                onClick={(event) => { event.stopPropagation(); handleCycleMap(1); }}
-                aria-label="Next map"
-                className="group flex items-center justify-center w-16 h-16 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)]"
-              >
-                <ChevronRight size={32} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
-              </button>
-            </div>
+            {/* Right arrow — only rendered when more than one theater is available */}
+            {availableTheaters.length > 1 && (
+              <div className="absolute right-6 top-1/2 -translate-y-1/2 z-40 hidden md:block">
+                <button
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); handleCycleMap(1); }}
+                  aria-label="Next map"
+                  className="group flex items-center justify-center w-16 h-16 bg-[#050912]/55 hover:bg-[#050912]/85 border border-slate-900 hover:border-amber-500/60 rounded-full transition-all duration-200 cursor-pointer active:scale-90 hover:shadow-[0_0_20px_rgba(245,158,11,0.25)]"
+                >
+                  <ChevronRight size={32} className="text-slate-400 group-hover:text-amber-400 transition-colors" />
+                </button>
+              </div>
+            )}
 
             {/* Theater nameplate — centered, just above Click to Play zone */}
             <div className="absolute left-1/2 -translate-x-1/2 top-[18%] z-40 flex flex-col items-center gap-1 pointer-events-none select-none">
-              <span className="text-[6.5px] font-black tracking-[0.4em] text-slate-600 uppercase font-mono">
-                THEATER {String(theaterIdx + 1).padStart(2, "0")} / {availableTheaters.length}
-              </span>
+              {availableTheaters.length > 1 && (
+                <span className="text-[6.5px] font-black tracking-[0.4em] text-slate-600 uppercase font-mono">
+                  THEATER {String(theaterIdx + 1).padStart(2, "0")} / {availableTheaters.length}
+                </span>
+              )}
               <h2
                 className="text-xl md:text-2xl font-black font-mono tracking-widest uppercase text-slate-100 leading-none"
                 style={{ textShadow: "0 2px 14px #000b, 0 0 2px #000" }}
@@ -420,12 +423,13 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   {mapPlayerCount} IN LOBBY
                 </span>
               </div>
-              {/* Position dots */}
-              <div className="flex items-center gap-1.5 mt-1">
-                {availableTheaters.map((t, i) => (
-                  <div key={t.id} className={`rounded-full transition-all duration-200 ${i === theaterIdx ? "w-4 h-1 bg-amber-400" : "w-1 h-1 bg-slate-700"}`} />
-                ))}
-              </div>
+              {availableTheaters.length > 1 && (
+                <div className="flex items-center gap-1.5 mt-1">
+                  {availableTheaters.map((t, i) => (
+                    <div key={t.id} className={`rounded-full transition-all duration-200 ${i === theaterIdx ? "w-4 h-1 bg-amber-400" : "w-1 h-1 bg-slate-700"}`} />
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Aircraft name bottom-left */}
