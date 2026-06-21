@@ -36,7 +36,16 @@ import type { BakedMapGeometry } from "./content/maps/mapTypes";
 import { renderMapGeometry, renderPaletteFallback } from "./mapGeometryRenderer";
 import { WEAPON_SPECS_MAP } from "./content/weapons/weaponData";
 import { ScatterRenderer } from "./scatterRenderer";
-import { buildVoxelMesh, deformAtImpact, disposeVoxelMesh, VoxelMeshState } from "./voxelMesh";
+import {
+  buildVoxelMesh,
+  deformAtImpact,
+  disposeVoxelMesh,
+  findVoxelImpact,
+  animateSpinCells,
+  setCockpitVisible,
+  resetVoxelMesh,
+  VoxelMeshState
+} from "./voxelMesh";
 import { getVoxelDef } from "./content/aircraft/voxelRegistry";
 import type { Vector3 } from "three";
 
@@ -544,6 +553,23 @@ export class WorldRenderer {
     if (state) deformAtImpact(state, localOffsetMeters, blastMeters);
   }
 
+  public resetVoxelState(pilotId: string) {
+    const state = this.voxelStateMap.get(pilotId);
+    if (state) resetVoxelMesh(state);
+  }
+
+  // Returns the struck voxel centre (local metres), null if aircraft uses voxels
+  // but segment misses, or undefined if the aircraft has no voxel definition.
+  public findVoxelImpact(
+    pilotId: string,
+    segStartLocal: THREE.Vector3,
+    segEndLocal: THREE.Vector3
+  ): THREE.Vector3 | null | undefined {
+    const state = this.voxelStateMap.get(pilotId);
+    if (!state) return undefined;
+    return findVoxelImpact(state, segStartLocal, segEndLocal);
+  }
+
   public createSmokeTail(
     x: number,
     y: number,
@@ -648,6 +674,7 @@ export class WorldRenderer {
           group = new THREE.Group();
           const state = buildVoxelMesh(voxDef);
           group.add(state.mesh);
+          if (state.spinMesh) group.add(state.spinMesh);
           this.voxelStateMap.set(p.id, state);
         } else {
           group = this.generateProceduralAircraft(
@@ -664,8 +691,17 @@ export class WorldRenderer {
       group.position.set(p.x, p.y, p.z);
       group.quaternion.setFromEuler(new THREE.Euler(p.pitch, p.yaw, p.roll, "YXZ"));
 
-      // Animate any block with the "spinZ" tag
-      group.traverse(child => {
+      // Voxel aircraft: animate spinZ instances and manage cockpit visibility.
+      const voxState = this.voxelStateMap.get(p.id);
+      if (voxState) {
+        animateSpinCells(voxState, dt, p.throttle);
+        if (p.id === playerPilotId) {
+          setCockpitVisible(voxState, this.cameraMode !== "first-person");
+        }
+      }
+
+      // Animate any block with the "spinZ" tag (non-voxel aircraft only)
+      if (!voxState) group.traverse(child => {
         if (child.userData.tags && child.userData.tags.includes("spinZ")) {
           child.rotation.z += (15 + p.throttle * 40) * dt;
         }

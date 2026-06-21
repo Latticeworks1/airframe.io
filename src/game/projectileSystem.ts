@@ -90,6 +90,14 @@ export interface EngineCallbacks {
     localOffsetMeters: Vector3,
     blastMeters: number
   ) => void;
+  // Returns the centre of the first voxel struck by the segment in local aircraft
+  // space, null if the aircraft uses voxels but the segment misses all of them,
+  // or undefined if the aircraft has no voxel definition (use closest-point fallback).
+  getVoxelImpact?: (
+    targetId: string,
+    segStartLocal: Vector3,
+    segEndLocal: Vector3
+  ) => THREE.Vector3 | null | undefined;
 }
 
 export class ProjectileSystem {
@@ -161,6 +169,8 @@ export class ProjectileSystem {
   private static eulerTmp = new THREE.Euler();
   private static relativeOffsetLocalTmp = new Vector3();
   private static localOffsetMetersTmp = new Vector3();
+  private static localSegStartTmp = new Vector3();
+  private static localSegEndTmp = new Vector3();
 
   public static updateProjectiles(
     dt: number,
@@ -207,16 +217,43 @@ export class ProjectileSystem {
         const hitRadius = getPlaneHitRadius(target.specs);
 
         if (distToPlaneCenter < hitRadius) {
-          ProjectileSystem.localImpactWorldTmp.copy(ProjectileSystem.closestTmp).sub(ProjectileSystem.targetPosTmp);
-
           ProjectileSystem.rotInvTmp
             .setFromEuler(ProjectileSystem.eulerTmp.set(target.pitch, target.yaw, target.roll, "YXZ"))
             .invert();
 
-          // Local offset in metres (before normalisation) — used for voxel deformation
-          ProjectileSystem.localOffsetMetersTmp
-            .copy(ProjectileSystem.localImpactWorldTmp)
+          // Transform projectile segment endpoints into local aircraft space
+          ProjectileSystem.localSegStartTmp
+            .copy(ProjectileSystem.lastPosTmp)
+            .sub(ProjectileSystem.targetPosTmp)
             .applyQuaternion(ProjectileSystem.rotInvTmp);
+          ProjectileSystem.localSegEndTmp
+            .copy(ProjectileSystem.currentPosTmp)
+            .sub(ProjectileSystem.targetPosTmp)
+            .applyQuaternion(ProjectileSystem.rotInvTmp);
+
+          // Precise voxel traversal when the target aircraft has a voxel def.
+          // getVoxelImpact returns:
+          //   Vector3  → voxel aircraft, cell struck — use as impact centre
+          //   null     → voxel aircraft, segment misses all cells — skip hit
+          //   undefined→ no voxel def — fall back to closest-point method
+          const voxResult = callbacks.getVoxelImpact?.(
+            target.id,
+            ProjectileSystem.localSegStartTmp,
+            ProjectileSystem.localSegEndTmp
+          );
+          if (voxResult === null) break; // voxel aircraft, true miss
+
+          if (voxResult !== undefined) {
+            ProjectileSystem.localOffsetMetersTmp.copy(voxResult);
+          } else {
+            // Closest-point fallback for aircraft without voxel definitions
+            ProjectileSystem.localImpactWorldTmp
+              .copy(ProjectileSystem.closestTmp)
+              .sub(ProjectileSystem.targetPosTmp);
+            ProjectileSystem.localOffsetMetersTmp
+              .copy(ProjectileSystem.localImpactWorldTmp)
+              .applyQuaternion(ProjectileSystem.rotInvTmp);
+          }
 
           ProjectileSystem.relativeOffsetLocalTmp
             .copy(ProjectileSystem.localOffsetMetersTmp)
@@ -232,7 +269,6 @@ export class ProjectileSystem {
           });
 
           const belt = beltName(p.belt);
-
           if (belt === "Armor-Piercing") finalDmg *= 1.3;
           if (belt === "Incendiary") finalDmg *= 0.85;
 
@@ -249,11 +285,13 @@ export class ProjectileSystem {
             );
           }
 
-          if (callbacks.onVoxelHit) {
-            const spec = WEAPON_SPECS_MAP[p.type];
-            // Blast radius scales with weapon destructive power: guns ~0.8m, rockets ~3m, bombs ~6m
-            const blastM = p.type === WeaponType.BOMB ? 6 : p.type === WeaponType.ROCKET ? 3 : 0.8;
-            callbacks.onVoxelHit(target.id, ProjectileSystem.localOffsetMetersTmp, blastM * (spec.damage / 100));
+          // Voxel deformation — only fired when a specific cell was struck.
+          // Blast radii are explicit per weapon type, not derived from damage values.
+          if (voxResult !== undefined && callbacks.onVoxelHit) {
+            const blastM =
+              p.type === WeaponType.BOMB   ? 2.50 :
+              p.type === WeaponType.ROCKET ? 0.75 : 0;
+            callbacks.onVoxelHit(target.id, ProjectileSystem.localOffsetMetersTmp, blastM);
           }
 
           if (callbacks.onHitEnemy) {
@@ -397,6 +435,23 @@ export class ProjectileSystem {
         const relativeOffset = new Vector3(0, -0.5, 0);
 
         FlightPhysicsEngine.applyDamage(p, baseSplash * falloff, String(type), relativeOffset);
+
+        if (callbacks.onVoxelHit) {
+          // Blast arrives from the epicenter direction. Transform that vector
+          // to local aircraft space and clamp to wing-tip distance so the
+          // impact lands on a surface voxel rather than empty space.
+          const rotInv = new THREE.Quaternion()
+            .setFromEuler(new THREE.Euler(p.pitch, p.yaw, p.roll, "YXZ"))
+            .invert();
+          const localDir = new Vector3(
+            p.x - epicenter.x, p.y - epicenter.y, p.z - epicenter.z
+          ).applyQuaternion(rotInv);
+          const localLen = localDir.length();
+          if (localLen > 7) localDir.multiplyScalar(7 / localLen);
+          // Blast radius at the pilot scales with proximity: 0.3 m at splashRad edge, 2.5 m at centre
+          const blastAtImpact = 0.3 + falloff * 2.2;
+          callbacks.onVoxelHit(p.id, localDir, blastAtImpact);
+        }
 
         if (callbacks.onHitEnemy) {
           callbacks.onHitEnemy(ownerId, p.id, false);

@@ -18,6 +18,12 @@ import {
 import { Crosshair, MapPin, Zap } from "lucide-react";
 import { MAP_REGISTRY } from "../game/content/maps/registry";
 
+export interface ChatMessage {
+  sender: string;
+  text: string;
+  ts: number;
+}
+
 interface HUDProps {
   playerPilot: Pilot | undefined;
   pilots: Pilot[];

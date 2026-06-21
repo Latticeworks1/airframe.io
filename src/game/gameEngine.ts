@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as THREE from "three";
 import { Vector3, Quaternion, Euler } from "three";
 import {
   Pilot,
@@ -112,6 +113,7 @@ export class GameEngine {
 
   public isMultiplayer = false;
   public isHost = false;
+  private _dtSmooth: number | undefined = undefined;
   public onProjectileSpawn?: (type: WeaponType) => void;
   public onProjectileImpact?: (
     type: WeaponType,
@@ -133,6 +135,12 @@ export class GameEngine {
     localOffsetMeters: Vector3,
     blastMeters: number
   ) => void;
+  public onPilotRespawn?: (pilotId: string) => void;
+  public getVoxelImpact?: (
+    targetId: string,
+    segStartLocal: Vector3,
+    segEndLocal: Vector3
+  ) => THREE.Vector3 | null | undefined;
 
   private onKillCallback: (event: KillEvent) => void;
   private onGameOverCallback: (victory: boolean, xp: number) => void;
@@ -532,7 +540,14 @@ export class GameEngine {
       return;
     }
 
-    const maxSubStep = 0.01; // 100Hz max physics step
+    // Adaptive physics rate: track a simple rolling average of dt and scale the
+    // sub-step ceiling up when the GPU is clearly overloaded (sustained >20ms
+    // frames). This keeps the physics loop from consuming most of the frame
+    // budget and allows the renderer to catch up. Minimum is 50Hz (0.02s).
+    this._dtSmooth = this._dtSmooth === undefined
+      ? dt
+      : this._dtSmooth * 0.95 + dt * 0.05;
+    const maxSubStep = Math.min(0.02, Math.max(0.01, this._dtSmooth * 0.5));
     let timeLeft = Math.min(0.1, dt); // clamp total dt to guard against death spiral
 
     while (timeLeft > 0) {
@@ -722,6 +737,9 @@ export class GameEngine {
         },
         onVoxelHit: (targetId, localOffsetMeters, blastMeters) => {
           if (this.onVoxelHit) this.onVoxelHit(targetId, localOffsetMeters, blastMeters);
+        },
+        getVoxelImpact: (targetId, segStartLocal, segEndLocal) => {
+          return this.getVoxelImpact?.(targetId, segStartLocal, segEndLocal);
         }
       }
     );
@@ -876,6 +894,8 @@ export class GameEngine {
     // start with a new controller so no manual override or trim-like state leaks
     // through the respawn boundary.
     this.controllers.delete(pilot.id);
+
+    if (this.onPilotRespawn) this.onPilotRespawn(pilot.id);
   }
 
   private runAIConsensus(bot: Pilot, dt: number) {

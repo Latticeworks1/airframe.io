@@ -93,6 +93,7 @@ const INITIAL_PROGRESSION: UserProgression = {
 
 export default function App() {
   const [progression, setProgression] = useState<UserProgression>(INITIAL_PROGRESSION);
+  const [isLoadingProgression, setIsLoadingProgression] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showDebrief, setShowDebrief] = useState(false);
   const [showRegistration, setShowRegistration] = useState(false);
@@ -206,27 +207,85 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hitmarker.key]);
 
-  // Load persistence — auto-assign callsign so registration is never a gate
+  // Load persistence — query the backend persistent bucket first, fall back and migrate local cache
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      const base: UserProgression = {
-        ...INITIAL_PROGRESSION,
-        ...(parsed ?? {}),
-        stats: { ...INITIAL_PROGRESSION.stats, ...(parsed?.stats || {}) },
-        equippedMods: parsed?.equippedMods || {},
-        unlockedPlanes: parsed?.unlockedPlanes || ["falcon-mk2"]
-      };
-      if (!base.nickname) {
-        base.nickname = generateCallsign();
-        base.rankCode = base.rankCode || "CDT";
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
+    const loadData = async () => {
+      const sid = getMultiplayerSessionId();
+      let base: UserProgression | null = null;
+
+      try {
+        const res = await fetch(`/api/progression?sid=${encodeURIComponent(sid)}`);
+        if (res.ok) {
+          const serverData = await res.json();
+          if (serverData && serverData.status !== "not_found") {
+            base = {
+              ...INITIAL_PROGRESSION,
+              ...serverData,
+              stats: { ...INITIAL_PROGRESSION.stats, ...(serverData.stats || {}) },
+              equippedMods: serverData.equippedMods || {},
+              unlockedPlanes: serverData.unlockedPlanes || ["falcon-mk2"]
+            };
+          }
+        }
+      } catch (e) {
+        console.warn("Failed fetching progression from server, falling back to cache", e);
       }
+
+      // Fall back to local storage cache if not found on server (migration path)
+      if (!base) {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          const parsed = raw ? JSON.parse(raw) : null;
+          if (parsed) {
+            base = {
+              ...INITIAL_PROGRESSION,
+              ...parsed,
+              stats: { ...INITIAL_PROGRESSION.stats, ...(parsed.stats || {}) },
+              equippedMods: parsed.equippedMods || {},
+              unlockedPlanes: parsed.unlockedPlanes || ["falcon-mk2"]
+            };
+
+            // Migrate browser-bound local save to the server
+            await fetch("/api/progression", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sessionId: sid, progression: base })
+            }).catch(e => console.warn("Failed migrating local storage save to server", e));
+          }
+        } catch (e) {
+          console.warn("Failed loading progression from local storage", e);
+        }
+      }
+
+      // If still no profile exists (first load), create a new cadet
+      if (!base) {
+        base = {
+          ...INITIAL_PROGRESSION,
+          nickname: generateCallsign(),
+          rankCode: "CDT",
+          unlockedPlanes: ["falcon-mk2"]
+        };
+
+        // Write new profile to server
+        await fetch("/api/progression", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: sid, progression: base })
+        }).catch(e => console.warn("Failed saving new profile to server", e));
+      }
+
+      // Always write to local storage as fallback/cache
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
+      } catch (e) {
+        console.warn("Failed to write fallback cache to local storage", e);
+      }
+
       setProgression(base);
-    } catch (e) {
-      console.warn("Failed loading progression save state", e);
-    }
+      setIsLoadingProgression(false);
+    };
+
+    loadData();
   }, []);
 
   const saveProgression = (updated: UserProgression) => {
@@ -236,6 +295,15 @@ export default function App() {
     } catch (e) {
       console.warn("localStorage persistence error", e);
     }
+
+    // Persist to server-side bucket storage asynchronously
+    const sid = getMultiplayerSessionId();
+    fetch("/api/progression", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: sid, progression: updated })
+    }).catch(e => console.warn("Failed saving progression to server", e));
+
     if (activeEngine) {
       const player = activeEngine.pilots.find(p => p.id === "player");
       if (player) {
@@ -554,6 +622,11 @@ export default function App() {
             }
           }
 
+          else if (msg.type === "voxel_impact") {
+            const lv = new Vector3(msg.lx, msg.ly, msg.lz);
+            renderer3D.deformAircraft(msg.targetId, lv, msg.blast);
+          }
+
           else if (msg.type === "kill_confirmed") {
             const netToLocal = (id: string) => id === myPilotId ? "player" : id;
             const killer = engine.pilots.find(p => p.id === netToLocal(msg.killerId));
@@ -673,6 +746,22 @@ export default function App() {
 
     engine.onVoxelHit = (targetId, localOffsetMeters, blastMeters) => {
       renderer3D.deformAircraft(targetId, localOffsetMeters, blastMeters);
+      if (isMultiplayer && socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
+          type: "voxel_impact",
+          targetId,
+          lx: localOffsetMeters.x, ly: localOffsetMeters.y, lz: localOffsetMeters.z,
+          blast: blastMeters
+        }));
+      }
+    };
+
+    engine.onPilotRespawn = (pilotId: string) => {
+      renderer3D.resetVoxelState(pilotId);
+    };
+
+    engine.getVoxelImpact = (targetId, segStartLocal, segEndLocal) => {
+      return renderer3D.findVoxelImpact(targetId, segStartLocal, segEndLocal);
     };
   }
 
@@ -1401,6 +1490,22 @@ export default function App() {
               <span>Return to Hangar Lobby</span>
               <ArrowRight size={13} />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* PILOT PROFILE SYNCHRONIZATION OVERLAY */}
+      {isLoadingProgression && (
+        <div className="absolute inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center font-mono text-slate-100 animate-fadeIn">
+          <div className="relative flex flex-col items-center max-w-sm w-full px-6 text-center">
+            {/* Spinning combat flight systems HUD loader */}
+            <div className="w-12 h-12 rounded-full border-2 border-slate-800 border-t-amber-500 animate-spin mb-6"></div>
+            <h1 className="text-sm font-bold tracking-[0.25em] text-amber-500 uppercase mb-2">
+              AIRFRAME LINK
+            </h1>
+            <p className="text-[9px] text-slate-500 uppercase tracking-widest animate-pulse">
+              Syncing pilot profile...
+            </p>
           </div>
         </div>
       )}

@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import http from "http";
-import { writeFileSync, appendFileSync } from "fs";
+import { writeFileSync, appendFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { createServer as createViteServer } from "vite";
 import { WebSocketServer, WebSocket } from "ws";
@@ -45,6 +45,7 @@ interface Room {
 
 async function startServer() {
   const app = express();
+  app.use(express.json());
   const PORT = parseInt(process.env.PORT ?? "3000", 10);
 
   // Core HTTP server wrapper
@@ -340,6 +341,21 @@ async function startServer() {
           }
         }
 
+        else if (data.type === "voxel_impact") {
+          if (!currentRoomId) return;
+          const room = rooms.get(currentRoomId);
+          if (!room) return;
+          const payload = JSON.stringify({
+            type: "voxel_impact",
+            targetId: data.targetId,
+            lx: data.lx, ly: data.ly, lz: data.lz,
+            blast: data.blast
+          });
+          room.sockets.forEach((s, _id) => {
+            if (s !== ws && s.readyState === WebSocket.OPEN) s.send(payload);
+          });
+        }
+
         else if (data.type === "skyzone_update") {
           if (!currentRoomId) return;
           const room = rooms.get(currentRoomId);
@@ -484,6 +500,54 @@ async function startServer() {
     const cutoff = Date.now() - 90_000;
     for (const [k, v] of lobbyPings) if (v < cutoff) lobbyPings.delete(k);
   }, 30_000);
+
+  // Persistent Save Directory (utilizing Hugging Face Storage Buckets at /data/saves)
+  // Falls back to a local "./saves" folder for local development
+  const saveDir = existsSync("/data") ? "/data/saves" : path.join(process.cwd(), "saves");
+  if (!existsSync(saveDir)) {
+    try {
+      mkdirSync(saveDir, { recursive: true });
+    } catch (e) {
+      console.error("Failed to create save directory:", e);
+    }
+  }
+
+  // Save/Load Progression APIs
+  app.get("/api/progression", (req, res) => {
+    const sid = req.query.sid as string | undefined;
+    if (!sid || sid.length > 128) {
+      res.status(400).json({ error: "Invalid session ID" });
+      return;
+    }
+    const filePath = path.join(saveDir, `${sid}.json`);
+    if (existsSync(filePath)) {
+      try {
+        const raw = readFileSync(filePath, "utf-8");
+        res.json(JSON.parse(raw));
+      } catch (e) {
+        console.error(`Failed to read progression file for ${sid}`, e);
+        res.status(500).json({ error: "Failed to read progression" });
+      }
+    } else {
+      res.json({ status: "not_found" });
+    }
+  });
+
+  app.post("/api/progression", (req, res) => {
+    const { sessionId, progression } = req.body;
+    if (!sessionId || sessionId.length > 128 || !progression) {
+      res.status(400).json({ error: "Invalid request payload" });
+      return;
+    }
+    const filePath = path.join(saveDir, `${sessionId}.json`);
+    try {
+      writeFileSync(filePath, JSON.stringify(progression, null, 2), "utf-8");
+      res.json({ ok: true });
+    } catch (e) {
+      console.error(`Failed to write progression file for ${sessionId}`, e);
+      res.status(500).json({ error: "Failed to save progression" });
+    }
+  });
 
   app.get("/api/presence", (req, res) => {
     const sid = req.query.sid as string | undefined;
