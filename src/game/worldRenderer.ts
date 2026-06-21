@@ -750,21 +750,21 @@ export class WorldRenderer {
           if (state.spinMesh) group.add(state.spinMesh);
           this.voxelStateMap.set(p.id, state);
 
-          // Build interior mesh for this aircraft if a def exists.
-          // Starts hidden; WorldRenderer.updateCamera shows it only in FPV.
-          const intDef = getInteriorDef(p.specs.id);
-          if (intDef) {
-            const intState = buildInteriorMesh(intDef);
-            group.add(intState.mesh);
-            this.interiorStateMap.set(p.id, { state: intState, def: intDef });
-          }
-
-          // Canvas-based cockpit (preferred — used when available, overrides voxel interior in FPV)
+          // Canvas cockpit if available — preferred over voxel interior.
+          // When present, skip building the voxel interior to save the extra DC
+          // and avoid the hidden InstancedMesh remaining in the scene graph.
           const ckDef = getCockpitDef(p.specs.id);
           if (ckDef) {
             const ckState = buildCockpitMesh(ckDef);
             group.add(ckState.group);
             this.cockpitStateMap.set(p.id, ckState);
+          } else {
+            const intDef = getInteriorDef(p.specs.id);
+            if (intDef) {
+              const intState = buildInteriorMesh(intDef);
+              group.add(intState.mesh);
+              this.interiorStateMap.set(p.id, { state: intState, def: intDef });
+            }
           }
         } else {
           group = this.generateProceduralAircraft(
@@ -1212,6 +1212,17 @@ export class WorldRenderer {
       const ckEntry = this.cockpitStateMap.get(playerPilotId);
       if (ckEntry) {
         ckEntry.group.visible = true;
+        // Feed live pilot state into shader uniforms.
+        const speed = Math.sqrt(
+          playerPilot.vx ** 2 + playerPilot.vy ** 2 + playerPilot.vz ** 2
+        );
+        const speedNorm = Math.min(speed / 600, 1.0);
+        const altNorm   = Math.min(playerPilot.y / 14000, 1.0);
+        const euler = new THREE.Euler().setFromQuaternion(
+          pGroup.quaternion, "YXZ"
+        );
+        const headingNorm = ((euler.y / (Math.PI * 2)) % 1 + 1) % 1;
+        ckEntry.updateLive(speedNorm, altNorm, headingNorm, playerPilot.throttle);
       } else {
         const intEntry = this.interiorStateMap.get(playerPilotId);
         if (intEntry) {
