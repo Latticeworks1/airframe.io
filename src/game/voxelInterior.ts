@@ -131,7 +131,9 @@ export function buildInteriorMesh(def: InteriorDef): InteriorMeshState {
   const geo = new THREE.BoxGeometry(1, 1, 1);
   // Interior uses a fresh material — FrontSide, no emissive, unaffected by
   // the FPV DoubleSide toggle applied to the exterior voxel material.
-  const mat = new THREE.MeshLambertMaterial({ flatShading: true, vertexColors: true });
+  // BasicMaterial renders vertex colors independent of scene lighting, giving
+  // predictable cockpit colors regardless of sun angle or shadow.
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
 
   const count = def.cells.length;
   const mesh = new THREE.InstancedMesh(geo, mat, count);
@@ -174,16 +176,17 @@ export function updateInteriorLive(
     if (!cell) continue;
 
     if (liveId.startsWith("throttle")) {
-      // Slide grip cell vertically with throttle ratio
-      const base = parseFloat(liveId.split(":")[1] ?? "0");
+      // "throttle:base:travel" — grip slides along Z (push forward = more power).
+      // base = gz at idle, base+travel = gz at max throttle.
+      const base   = parseFloat(liveId.split(":")[1] ?? "0");
       const travel = parseFloat(liveId.split(":")[2] ?? "0");
-      const gripY = base + travel * (1 - Math.min(throttle, 1.0));
-      _dummy.position.set(cell.gx * state.voxelSize, gripY * state.voxelSize, cell.gz * state.voxelSize);
+      const t      = Math.min(throttle, 1.1) / 1.1;
+      const gripGZ = base + travel * t;
+      _dummy.position.set(cell.gx * state.voxelSize, cell.gy * state.voxelSize, gripGZ * state.voxelSize);
       _dummy.scale.setScalar(state.voxelSize);
       _dummy.updateMatrix();
       state.mesh.setMatrixAt(idx, _dummy.matrix);
-      // color shifts green → amber → red with throttle
-      const t = Math.min(throttle, 1.1) / 1.1;
+      // color green (idle) → amber → red (WEP)
       const r = Math.round(Math.min(255, t * 2 * 255));
       const g = Math.round(Math.min(255, (1 - t) * 2 * 255 + 80));
       _col.setRGB(r / 255, g / 255, 0.05);

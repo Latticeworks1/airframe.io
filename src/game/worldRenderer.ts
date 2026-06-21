@@ -925,7 +925,9 @@ export class WorldRenderer {
         this.skyDome,
         this.camera,
         this.scene.fog instanceof THREE.Fog ? this.scene.fog : null,
-        dt
+        dt,
+        1.0,
+        this.mapDef.world.radius * 0.84
       );
     }
     this.updateAtmosphere(dt);
