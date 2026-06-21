@@ -237,10 +237,11 @@ const BombSightOverlay: React.FC<{
           <circle cx="500" cy="500" r="310" strokeWidth="2" />
           <circle cx="500" cy="500" r="218" strokeWidth="1.5" strokeDasharray="7 12" />
           <circle cx="500" cy="500" r="86" strokeWidth="2" />
-          <line x1="120" y1="500" x2="420" y2="500" strokeWidth="2" />
-          <line x1="580" y1="500" x2="880" y2="500" strokeWidth="2" />
-          <line x1="500" y1="120" x2="500" y2="420" strokeWidth="2" />
-          <line x1="500" y1="580" x2="500" y2="880" strokeWidth="2" />
+          {/* Leave the cardinal readouts clear instead of drawing the axes through them. */}
+          <line x1="180" y1="500" x2="420" y2="500" strokeWidth="2" />
+          <line x1="580" y1="500" x2="820" y2="500" strokeWidth="2" />
+          <line x1="500" y1="164" x2="500" y2="420" strokeWidth="2" />
+          <line x1="500" y1="580" x2="500" y2="838" strokeWidth="2" />
           <path d="M440 500H560M500 440V560" strokeWidth="3" />
           <path d="M452 365L500 340L548 365M452 635L500 660L548 635" strokeWidth="2" />
 
