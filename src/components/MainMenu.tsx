@@ -85,9 +85,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
   const [claimedDaily, setClaimedDaily] = useState(false);
   const [liveCounts, setLiveCounts] = useState<{ total: number; byQueue: Record<string, number> }>({ total: 0, byQueue: {} });
+  const [liveBlips, setLiveBlips] = useState<{ team: 1 | 2; nx: number; ny: number }[]>([]);
 
   useEffect(() => {
-    const poll = async () => {
+    const pollHealth = async () => {
       try {
         const r = await fetch("/api/health");
         if (r.ok) {
@@ -96,9 +97,25 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         }
       } catch { /* offline */ }
     };
-    poll();
-    const id = setInterval(poll, 6000);
-    return () => clearInterval(id);
+    const pollPreview = async () => {
+      try {
+        const r = await fetch("/api/preview");
+        if (r.ok) {
+          const d = await r.json();
+          const WORLD_R = 18000;
+          const blips = (d.players ?? []).map((p: { team: number; x: number; z: number }) => ({
+            team: p.team as 1 | 2,
+            nx: Math.min(1, Math.max(0, (p.x + WORLD_R) / (WORLD_R * 2))),
+            ny: Math.min(1, Math.max(0, (p.z + WORLD_R) / (WORLD_R * 2)))
+          }));
+          setLiveBlips(blips);
+        }
+      } catch { /* offline */ }
+    };
+    pollHealth(); pollPreview();
+    const hi = setInterval(pollHealth, 6000);
+    const pi = setInterval(pollPreview, 3000);
+    return () => { clearInterval(hi); clearInterval(pi); };
   }, []);
 
   // Ready Room UI Popups States
@@ -320,6 +337,28 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         <PlanePreview3D planeId={selectedPlaneId} fullScreen={true} skinId={activeSkinId} mapId={selectedMapId} />
         <div className="absolute inset-0 bg-radial-gradient from-transparent via-slate-950/20 to-[#03050a]/90 pointer-events-none" />
         <div className="absolute inset-x-0 bottom-0 h-96 bg-gradient-to-t from-[#03060c] via-[#03060c]/60 to-transparent pointer-events-none" />
+
+        {/* Live battle blips — shown when an active game is running */}
+        {liveBlips.length > 0 && (
+          <div className="absolute inset-0 pointer-events-none" aria-hidden>
+            {liveBlips.map((b, i) => (
+              <div
+                key={i}
+                className="absolute"
+                style={{ left: `${b.nx * 100}%`, top: `${b.ny * 100}%` }}
+              >
+                <div className={`w-1.5 h-1.5 rounded-full ${b.team === 1 ? "bg-sky-400" : "bg-red-400"} opacity-80 animate-ping`}
+                  style={{ animationDuration: `${1.8 + (i % 3) * 0.4}s`, animationDelay: `${(i * 0.17) % 1}s` }}
+                />
+              </div>
+            ))}
+            <div className="absolute bottom-20 right-8 flex items-center gap-1.5">
+              <div className="w-1 h-1 rounded-full bg-emerald-400 animate-ping" style={{ animationDuration: "2s" }} />
+              <span className="text-[6.5px] font-black text-emerald-400/70 uppercase font-mono tracking-widest">LIVE MATCH IN PROGRESS</span>
+            </div>
+          </div>
+        )}
+
         <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex items-center gap-12 pointer-events-none select-none opacity-20">
           <span className="text-[7px] text-[#475569] tracking-[0.8em] font-mono uppercase">AERO COMMAND HUB DECK ZONE B</span>
           <span className="text-[7.5px] text-[#475569] tracking-[0.8em] font-mono uppercase">HEADING 285°</span>

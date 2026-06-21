@@ -489,6 +489,20 @@ async function startServer() {
     res.json({ status: "ok", totalPlayers: total, peakConcurrent, byQueue });
   });
 
+  // Sanitized live game preview — positions only, no identifying info
+  app.get("/api/preview", (req, res) => {
+    const busiest = Array.from(rooms.values()).sort((a, b) => b.players.size - a.players.size)[0];
+    if (!busiest) { res.json({ players: [] }); return; }
+    const players = Array.from(busiest.players.values()).map(p => ({
+      team: p.team,
+      x: Math.round(p.x),
+      y: Math.round(p.y),
+      z: Math.round(p.z),
+      a: p.aircraftId
+    }));
+    res.json({ queueKey: busiest.queueKey, players });
+  });
+
   const telemPath = path.join(tmpdir(), "airframe-telemetry.jsonl");
 
   // Client-Side Asset Bundling & Middleware
