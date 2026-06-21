@@ -476,9 +476,17 @@ async function startServer() {
     });
   });
 
-  // API Route for quick status check
+  let peakConcurrent = 0;
+
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", activeRooms: rooms.size });
+    const byQueue: Record<string, number> = {};
+    let total = 0;
+    rooms.forEach(room => {
+      byQueue[room.queueKey] = (byQueue[room.queueKey] ?? 0) + room.players.size;
+      total += room.players.size;
+    });
+    if (total > peakConcurrent) peakConcurrent = total;
+    res.json({ status: "ok", totalPlayers: total, peakConcurrent, byQueue });
   });
 
   const telemPath = path.join(tmpdir(), "airframe-telemetry.jsonl");
