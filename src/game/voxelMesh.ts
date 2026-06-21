@@ -56,14 +56,16 @@ export function buildVoxelMesh(def: VoxelAircraftDef): VoxelMeshState {
 
   // Main mesh — static cells
   const mesh = new THREE.InstancedMesh(geo, mat, staticSurface.length);
-  mesh.castShadow = false;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   mesh.count = staticSurface.length;
 
   // Spin mesh — separate so only these ~23 matrices upload every frame
   let spinMesh: THREE.InstancedMesh | null = null;
   if (spinSurface.length > 0) {
     spinMesh = new THREE.InstancedMesh(geo.clone(), mat.clone(), spinSurface.length);
-    spinMesh.castShadow = false;
+    spinMesh.castShadow = true;
+    spinMesh.receiveShadow = true;
     spinMesh.count = spinSurface.length;
   }
 
