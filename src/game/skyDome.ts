@@ -116,16 +116,11 @@ export function updateSkyDome(
   );
 
   if (fog) {
-    fog.near = THREE.MathUtils.lerp(
-      profile.fogNear,
-      profile.fogNear * 3.0,
-      altitude
-    );
-    fog.far = THREE.MathUtils.lerp(
-      profile.fogFar,
-      profile.fogFar * 6.0,
-      altitude
-    );
+    // Keep the fog close to its ground-level values at altitude so the world
+    // boundary stays hidden even when flying high. Old 3× / 6× multipliers
+    // ballooned fogFar to 210 km at 3 km AGL, leaving the 32 km edge visible.
+    fog.near = THREE.MathUtils.lerp(profile.fogNear, profile.fogNear * 1.3, altitude);
+    fog.far  = THREE.MathUtils.lerp(profile.fogFar,  profile.fogFar  * 1.4, altitude);
   }
 
   // Dynamic far plane: base 65 000 m keeps the 32 000-unit world radius fully

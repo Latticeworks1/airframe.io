@@ -347,8 +347,10 @@ export class WorldRenderer {
     }
 
     if (def.kind === "heightmap") {
-      // Subdivided plane displaced by heightmap — load async then displace verts
-      const segs = window.devicePixelRatio >= 2 ? 128 : 256; // fewer segs on mobile
+      // Subdivided plane displaced by heightmap — load async then displace verts.
+      // Higher segment count halves the vertex spacing, reducing the jagged silhouette
+      // at the horizon. 512 → 125m spacing on a 64km plane; 256 → 125m on 32km.
+      const segs = window.devicePixelRatio >= 2 ? 256 : 512;
       const planeGeo = new THREE.PlaneGeometry(world.radius * 2, world.radius * 2, segs, segs);
       planeGeo.rotateX(-Math.PI / 2);
       this.heightmapGeo = planeGeo;
@@ -1100,7 +1102,11 @@ export class WorldRenderer {
         .multiply(mountQuaternion)
         .normalize();
     } else if (this.cameraMode === "first-person") {
-      pGroup.visible = true;
+      // Hide the entire aircraft group in first-person: the exterior voxel shell
+      // has no interior lighting and would appear as unlit black silhouettes.
+      // The cockpit frame, dashboard, and canopy are handled by the 2D CockpitOverlay
+      // in GameHUD, so no 3D interior geometry is needed here.
+      pGroup.visible = false;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, true);
 
       const localCockpitEye = new THREE.Vector3(

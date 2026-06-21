@@ -84,6 +84,9 @@ const CockpitOverlay: React.FC<{ pilot: Pilot | undefined }> = ({ pilot }) => {
     ? Math.round(((pilot.yaw * 180 / Math.PI) % 360 + 360) % 360)
     : 0;
   const thr = pilot ? Math.floor(pilot.throttle * 100) : 0;
+  // throttle state for instrument glow
+  const thrRatio = pilot ? pilot.throttle : 0;
+  const engHealth = pilot ? pilot.damage.engine : 1;
 
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
@@ -94,47 +97,114 @@ const CockpitOverlay: React.FC<{ pilot: Pilot | undefined }> = ({ pilot }) => {
         aria-hidden="true"
       >
         <defs>
+          {/* Deep coaming from bottom — the instrument panel base */}
           <linearGradient id="cockpit-coaming" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#1e293b" stopOpacity="0.88" />
-            <stop offset="30%" stopColor="#0f172a" stopOpacity="0.96" />
-            <stop offset="100%" stopColor="#020617" stopOpacity="0.99" />
+            <stop offset="0%" stopColor="#111827" stopOpacity="0.0" />
+            <stop offset="18%" stopColor="#0f172a" stopOpacity="0.92" />
+            <stop offset="55%" stopColor="#080e18" stopOpacity="0.98" />
+            <stop offset="100%" stopColor="#020617" stopOpacity="1" />
           </linearGradient>
-          <linearGradient id="cockpit-rail" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#64748b" stopOpacity="0.55" />
-            <stop offset="35%" stopColor="#1e293b" stopOpacity="0.9" />
-            <stop offset="100%" stopColor="#020617" stopOpacity="0.96" />
+          {/* Left/right sidewall gradient */}
+          <linearGradient id="cockpit-left-wall" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#020617" stopOpacity="1" />
+            <stop offset="60%" stopColor="#0c1628" stopOpacity="0.96" />
+            <stop offset="100%" stopColor="#111827" stopOpacity="0" />
           </linearGradient>
+          <linearGradient id="cockpit-right-wall" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#111827" stopOpacity="0" />
+            <stop offset="40%" stopColor="#0c1628" stopOpacity="0.96" />
+            <stop offset="100%" stopColor="#020617" stopOpacity="1" />
+          </linearGradient>
+          {/* Canopy frame strut gradient */}
+          <linearGradient id="strut-grad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#374151" stopOpacity="0.9" />
+            <stop offset="100%" stopColor="#1e293b" stopOpacity="0.7" />
+          </linearGradient>
+          {/* Instrument panel ambient glow */}
+          <radialGradient id="panel-glow" cx="50%" cy="100%" r="60%">
+            <stop offset="0%" stopColor="#10b981" stopOpacity={0.12 + thrRatio * 0.08} />
+            <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+          </radialGradient>
+          {/* Engine status glow */}
+          <radialGradient id="eng-glow" cx="30%" cy="100%" r="40%">
+            <stop offset="0%" stopColor="#f59e0b" stopOpacity={thrRatio * 0.18} />
+            <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
+          </radialGradient>
         </defs>
 
-        {/* Low-profile glare shield: leaves the sky and peripheral view open. */}
-        <path
-          d="M0 900V810L120 752L310 782L470 748H1130L1290 782L1480 752L1600 810V900Z"
-          fill="url(#cockpit-coaming)"
-        />
-        <path
-          fill="none"
-          stroke="#64748b"
-          strokeOpacity="0.45"
-          strokeWidth="3"
-          d="M0 810L120 752L310 782L470 748H1130L1290 782L1480 752L1600 810"
-        />
+        {/* ── LEFT SIDEWALL ───────────────────────────────────────────────── */}
+        <path d="M0 0H280L380 900H0Z" fill="url(#cockpit-left-wall)" />
+        {/* Left A-pillar strut */}
+        <path d="M268 0L295 0L398 900L370 900Z" fill="url(#strut-grad)" />
+        {/* Left lower console face */}
+        <path d="M0 600L180 680L280 900H0Z" fill="#06080f" fillOpacity="0.96" />
+        {/* Left console instrument face detail */}
+        <rect x="18" y="650" width="100" height="14" rx="2" fill="#0a1628" stroke="#1e3a5a" strokeWidth="0.8"/>
+        <rect x="18" y="672" width="60" height="8" rx="1" fill="#10b981" fillOpacity="0.15"/>
+        <rect x="18" y="688" width="80" height="8" rx="1" fill="#0a1628" stroke="#1e293b" strokeWidth="0.5"/>
+        {/* Throttle lever left */}
+        <rect x="32" y="710" width="12" height="55" rx="4" fill="#1e293b" stroke="#334155" strokeWidth="1"/>
+        <rect x={32} y={710 + (1 - thrRatio) * 40} width="12" height="15" rx="3" fill="#374151" stroke="#64748b" strokeWidth="1"/>
 
-        {/* Short lower canopy rails suggest structure without framing the whole screen. */}
+        {/* ── RIGHT SIDEWALL ──────────────────────────────────────────────── */}
+        <path d="M1600 0H1320L1220 900H1600Z" fill="url(#cockpit-right-wall)" />
+        {/* Right A-pillar strut */}
+        <path d="M1332 0L1305 0L1202 900L1230 900Z" fill="url(#strut-grad)" />
+        {/* Right lower console face */}
+        <path d="M1600 600L1420 680L1320 900H1600Z" fill="#06080f" fillOpacity="0.96" />
+        {/* Right console — MFD placeholder */}
+        <rect x="1480" y="650" width="100" height="80" rx="2" fill="#060d1a" stroke="#1e3a5a" strokeWidth="0.8"/>
+        <rect x="1492" y="662" width="76" height="56" rx="1" fill="#030810" stroke="#0f2040" strokeWidth="0.5"/>
+        {/* Subtle MFD content lines */}
+        <line x1="1492" y1="680" x2="1568" y2="680" stroke="#10b981" strokeOpacity="0.12" strokeWidth="0.6"/>
+        <line x1="1492" y1="694" x2="1550" y2="694" stroke="#10b981" strokeOpacity="0.08" strokeWidth="0.6"/>
+        <line x1="1492" y1="708" x2="1560" y2="708" stroke="#10b981" strokeOpacity="0.06" strokeWidth="0.6"/>
+
+        {/* ── MAIN COAMING / INSTRUMENT PANEL ────────────────────────────── */}
+        {/* Instrument panel ambient glow bleed */}
+        <rect x="0" y="0" width="1600" height="900" fill="url(#panel-glow)"/>
+        <rect x="0" y="0" width="1600" height="900" fill="url(#eng-glow)"/>
+        {/* Main coaming shape — wide scoop from bottom */}
+        <path d="M370 900L398 750L520 690L680 668H920L1080 668L1202 690L1208 750L1230 900Z"
+          fill="url(#cockpit-coaming)" />
+        {/* Coaming upper edge highlight */}
+        <path d="M398 750L520 690L680 668H920L1080 668L1202 690L1208 750"
+          fill="none" stroke="#1e3a5a" strokeOpacity="0.7" strokeWidth="1.2"/>
+        {/* Glare shield lip */}
+        <path d="M520 668L560 652H1040L1080 668" fill="#0c1220" stroke="#1e293b" strokeWidth="0.8"/>
+
+        {/* Instrument panel face — central strip */}
+        <rect x="490" y="720" width="620" height="90" rx="3" fill="#06080f" stroke="#1e293b" strokeWidth="0.8"/>
+        {/* Panel indicator rows */}
+        {[0,1,2,3,4].map(i => (
+          <rect key={i} x={510 + i*115} y="734" width="95" height="28" rx="2"
+            fill="#070d1a" stroke="#0f1e33" strokeWidth="0.6"/>
+        ))}
+        {/* Throttle RPM bar center */}
+        <rect x="760" y="774" width="80" height="6" rx="2" fill="#0a1628"/>
+        <rect x="760" y="774" width={80 * thrRatio} height="6" rx="2"
+          fill={thrRatio > 1.05 ? "#ef4444" : thrRatio > 0.9 ? "#f59e0b" : "#10b981"} fillOpacity="0.7"/>
+        {/* Engine health bar */}
+        <rect x="760" y="785" width="80" height="4" rx="1" fill="#0a1628"/>
+        <rect x="760" y="785" width={80 * engHealth} height="4" rx="1" fill="#10b981" fillOpacity="0.5"/>
+
+        {/* ── CANOPY B-PILLAR (centre top strut) ─────────────────────────── */}
+        {/* Centre bow — barely visible, just a subtle shadow line */}
+        <path d="M780 0L790 0L820 668L810 668Z" fill="#1e293b" fillOpacity="0.55"/>
+
+        {/* ── CANOPY FRAME CORNERS ────────────────────────────────────────── */}
+        {/* Top-left bow */}
+        <path d="M0 0L30 0L290 550L268 560Z" fill="#1e293b" fillOpacity="0.30"/>
+        {/* Top-right bow */}
+        <path d="M1600 0L1570 0L1310 550L1332 560Z" fill="#1e293b" fillOpacity="0.30"/>
+
+        {/* ── NOSE COAMING (centre instrument arch) ───────────────────────── */}
         <path
-          d="M0 645L132 725L230 778L174 805L74 760L0 724Z"
-          fill="url(#cockpit-rail)"
-        />
-        <path
-          d="M1600 645L1468 725L1370 778L1426 805L1526 760L1600 724Z"
-          fill="url(#cockpit-rail)"
-        />
-        <path
-          d="M665 748L715 720H885L935 748Z"
-          fill="#020617"
-          fillOpacity="0.82"
-          stroke="#334155"
-          strokeOpacity="0.65"
-          strokeWidth="2"
+          d="M665 668L715 640H885L935 668Z"
+          fill="#060b14"
+          stroke="#1e293b"
+          strokeOpacity="0.6"
+          strokeWidth="1.2"
         />
       </svg>
 

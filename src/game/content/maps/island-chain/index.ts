@@ -17,14 +17,19 @@ export const map: MapDefinition = {
   palette:  { base: "#14532d", colors: ["#1b5e20","#14532d","#2e7d32","#15803d","#22c55e","#4caf50","#4ade80","#854d0e","#a16207","#ca8a04"], roadColor: "rgba(241, 245, 249, 0.25)" },
   tileOrigin: { lat: 21.47, lon: -157.98, zoom: 12 },
   atmosphere: {
-    backgroundColor: "#b85830", fogColor: "#c97a48", fogNear: 10000, fogFar: 35000,
-    exposure: 0.62, turbidity: 10, rayleigh: 1.6, mieCoefficient: 0.008, mieDirectionalG: 0.88,
-    sunElevationDeg: 8, sunAzimuthDeg: 262, sunColor: "#ff8c35", sunIntensity: 1.35, showSunDisc: 1,
-    skyLightColor: "#ffbe80", groundLightColor: "#6b3520", ambientIntensity: 0.78,
-    cloudLayer:  { scale: 0.00018, speed: 0.00005, coverage: 0.30, density: 0.22, elevation: 0.55 },
-    cloudField:  { brightColor: "#ffd5a0", shadowColor: "#8a5a3f", fogNear: 18000, fogFar: 42000, clusterBase: 8, clusterDensityScale: 22, altitudeMin: 800, altitudeMax: 2200 },
-    cloudVeilColor: "#b07050",
+    // Low turbidity lets the Rayleigh gradient show — orange at horizon transitions
+    // to dusty rose then lavender-purple at zenith, matching the reference photo.
+    // Tight mieDirectionalG (0.97) collapses the wide white bloom into a proper
+    // tiny sun disc with a focused amber corona rather than a cream wash.
+    backgroundColor: "#c25038", fogColor: "#c8706a", fogNear: 10000, fogFar: 30000,
+    exposure: 0.58, turbidity: 3.2, rayleigh: 2.4, mieCoefficient: 0.004, mieDirectionalG: 0.97,
+    sunElevationDeg: 5, sunAzimuthDeg: 262, sunColor: "#ffaa33", sunIntensity: 0.92, showSunDisc: 1,
+    // Scene light colours tuned to match: warm amber key, lavender-pink fill from sky
+    skyLightColor: "#e8b0b8", groundLightColor: "#6b3020", ambientIntensity: 0.68,
+    cloudLayer:  { scale: 0.00018, speed: 0.00005, coverage: 0.35, density: 0.28, elevation: 0.52 },
+    cloudField:  { brightColor: "#ffc898", shadowColor: "#7a5868", fogNear: 18000, fogFar: 42000, clusterBase: 8, clusterDensityScale: 22, altitudeMin: 800, altitudeMax: 2200 },
+    cloudVeilColor: "#c06858",
     lightning: { enabled: false, color: "#ffffff", minDelay: 8, maxDelay: 16 },
-    preview: { backgroundColor: "#1a0a05", skyGradient: ["#7a2e10","#c44a20","#e8834a"] as [string,string,string], fogNear: 20, fogFar: 80, fillLightColor: "#ff8c35", fillLightIntensity: 0.45, starColor: "#ffe0c0", starOpacity: 0.18 }
+    preview: { backgroundColor: "#1a0a05", skyGradient: ["#7a2e10","#c44a20","#e8834a"] as [string,string,string], fogNear: 20, fogFar: 80, fillLightColor: "#ffaa33", fillLightIntensity: 0.42, starColor: "#ffe0c0", starOpacity: 0.18 }
   },
 };
