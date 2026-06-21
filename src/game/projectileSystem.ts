@@ -83,6 +83,13 @@ export interface EngineCallbacks {
     bulletType: string,
     hitSpotLocal: Vector3
   ) => void;
+  // Fires with the actual local-space impact offset in metres (not normalised)
+  // so the voxel deformation system can destroy voxels in the right place.
+  onVoxelHit?: (
+    targetId: string,
+    localOffsetMeters: Vector3,
+    blastMeters: number
+  ) => void;
 }
 
 export class ProjectileSystem {
@@ -153,6 +160,7 @@ export class ProjectileSystem {
   private static rotInvTmp = new THREE.Quaternion();
   private static eulerTmp = new THREE.Euler();
   private static relativeOffsetLocalTmp = new Vector3();
+  private static localOffsetMetersTmp = new Vector3();
 
   public static updateProjectiles(
     dt: number,
@@ -205,9 +213,13 @@ export class ProjectileSystem {
             .setFromEuler(ProjectileSystem.eulerTmp.set(target.pitch, target.yaw, target.roll, "YXZ"))
             .invert();
 
-          ProjectileSystem.relativeOffsetLocalTmp
+          // Local offset in metres (before normalisation) — used for voxel deformation
+          ProjectileSystem.localOffsetMetersTmp
             .copy(ProjectileSystem.localImpactWorldTmp)
-            .applyQuaternion(ProjectileSystem.rotInvTmp)
+            .applyQuaternion(ProjectileSystem.rotInvTmp);
+
+          ProjectileSystem.relativeOffsetLocalTmp
+            .copy(ProjectileSystem.localOffsetMetersTmp)
             .divideScalar(hitRadius);
 
           let finalDmg = WEAPON_SPECS_MAP[p.type].damage;
@@ -235,6 +247,13 @@ export class ProjectileSystem {
               String(p.type),
               ProjectileSystem.relativeOffsetLocalTmp
             );
+          }
+
+          if (callbacks.onVoxelHit) {
+            const spec = WEAPON_SPECS_MAP[p.type];
+            // Blast radius scales with weapon destructive power: guns ~0.8m, rockets ~3m, bombs ~6m
+            const blastM = p.type === WeaponType.BOMB ? 6 : p.type === WeaponType.ROCKET ? 3 : 0.8;
+            callbacks.onVoxelHit(target.id, ProjectileSystem.localOffsetMetersTmp, blastM * (spec.damage / 100));
           }
 
           if (callbacks.onHitEnemy) {

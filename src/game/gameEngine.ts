@@ -128,6 +128,11 @@ export class GameEngine {
     bulletType: string,
     hitSpotLocal: Vector3
   ) => void;
+  public onVoxelHit?: (
+    targetId: string,
+    localOffsetMeters: Vector3,
+    blastMeters: number
+  ) => void;
 
   private onKillCallback: (event: KillEvent) => void;
   private onGameOverCallback: (victory: boolean, xp: number) => void;
@@ -290,8 +295,8 @@ export class GameEngine {
     this.pilots.push(playerPilot);
     this.playerPilotId = "player";
 
-    let adversaryCount = 5;
-    let teammateCount = 4;
+    let adversaryCount = 7;
+    let teammateCount = 6;
 
     if (this.matchMode === MatchMode.DuelArena) {
       adversaryCount = 1;
@@ -714,6 +719,9 @@ export class GameEngine {
           if (k === "player" && this.onLocalPlayerHit) {
             this.onLocalPlayerHit(t, isGround);
           }
+        },
+        onVoxelHit: (targetId, localOffsetMeters, blastMeters) => {
+          if (this.onVoxelHit) this.onVoxelHit(targetId, localOffsetMeters, blastMeters);
         }
       }
     );

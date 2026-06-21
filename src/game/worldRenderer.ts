@@ -34,7 +34,11 @@ import { getProjectileReleaseState } from "./projectileSystem";
 import { MapDefinition } from "./content/maps/mapTypes";
 import type { BakedMapGeometry } from "./content/maps/mapTypes";
 import { renderMapGeometry, renderPaletteFallback } from "./mapGeometryRenderer";
+import { WEAPON_SPECS_MAP } from "./content/weapons/weaponData";
 import { ScatterRenderer } from "./scatterRenderer";
+import { buildVoxelMesh, deformAtImpact, disposeVoxelMesh, VoxelMeshState } from "./voxelMesh";
+import { getVoxelDef } from "./content/aircraft/voxelRegistry";
+import type { Vector3 } from "three";
 
 
 
@@ -49,6 +53,7 @@ export class WorldRenderer {
   private container!: HTMLDivElement;
 
   private aircraftGroupMap = new Map<string, THREE.Group>();
+  private voxelStateMap = new Map<string, VoxelMeshState>();
   private cloudField: CloudField | null = null;
   private islands: THREE.Mesh[] = [];
   private carriers: THREE.Group[] = [];
@@ -285,6 +290,37 @@ export class WorldRenderer {
     const landMat = new THREE.MeshLambertMaterial({ flatShading: true });
     this.groundMaterial = landMat;
 
+    // Water surface at waterHeight + 0.3 so it floats just above ocean-floor
+    // heightmap vertices without any polygonOffset — negative offsets push the
+    // plane forward in the depth buffer, which causes it to overdraw shoreline land.
+    {
+      const waterColor = new THREE.Color(this.mapDef.palette.colors[0] ?? "#0369a1");
+      const waterMat = new THREE.MeshBasicMaterial({ color: waterColor });
+      const waterMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(world.radius * 2, world.radius * 2),
+        waterMat
+      );
+      waterMesh.rotation.x = -Math.PI / 2;
+      waterMesh.position.y = world.waterHeight + 0.3;
+      this.scene.add(waterMesh);
+    }
+
+    // Infinite skirt plane sits well below water so the horizon blends into
+    // the fog color rather than dropping into void at the map boundary.
+    {
+      const skirtSize = world.radius * 12;
+      const fogColor = new THREE.Color(this.mapDef.atmosphere.fogColor);
+      const skirtMat = new THREE.MeshBasicMaterial({ color: fogColor, fog: false, depthWrite: false });
+      const skirtMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(skirtSize, skirtSize),
+        skirtMat
+      );
+      skirtMesh.rotation.x = -Math.PI / 2;
+      skirtMesh.position.y = world.waterHeight - 20;
+      skirtMesh.renderOrder = -1;
+      this.scene.add(skirtMesh);
+    }
+
     if (def.kind === "heightmap") {
       // Subdivided plane displaced by heightmap — load async then displace verts
       const segs = window.devicePixelRatio >= 2 ? 128 : 256; // fewer segs on mobile
@@ -297,9 +333,12 @@ export class WorldRenderer {
       try {
         const hd = await loadHeightmap(def.path, world.radius, def.elevationScale);
         const pos = planeGeo.attributes.position as THREE.BufferAttribute;
+        const wh = world.waterHeight;
         for (let i = 0; i < pos.count; i++) {
           const x = pos.getX(i), z = pos.getZ(i);
-          pos.setY(i, sampleHeightmapAt(hd, x, z));
+          const h = sampleHeightmapAt(hd, x, z);
+          // Clamp sub-water vertices down so ocean floor never intersects the water plane.
+          pos.setY(i, h < wh ? Math.min(h, wh - 1.5) : h);
         }
         pos.needsUpdate = true;
         planeGeo.computeVertexNormals();
@@ -500,6 +539,11 @@ export class WorldRenderer {
     return createAircraftMesh(renderDef);
   }
 
+  public deformAircraft(pilotId: string, localOffsetMeters: Vector3, blastMeters: number) {
+    const state = this.voxelStateMap.get(pilotId);
+    if (state) deformAtImpact(state, localOffsetMeters, blastMeters);
+  }
+
   public createSmokeTail(
     x: number,
     y: number,
@@ -599,12 +643,20 @@ export class WorldRenderer {
       let group = this.aircraftGroupMap.get(p.id);
 
       if (!group) {
-        group = this.generateProceduralAircraft(
-          p.specs.id,
-          p.specs.color,
-          p.specs.secondaryColor,
-          p.specs.accentColor
-        );
+        const voxDef = getVoxelDef(p.specs.id);
+        if (voxDef) {
+          group = new THREE.Group();
+          const state = buildVoxelMesh(voxDef);
+          group.add(state.mesh);
+          this.voxelStateMap.set(p.id, state);
+        } else {
+          group = this.generateProceduralAircraft(
+            p.specs.id,
+            p.specs.color,
+            p.specs.secondaryColor,
+            p.specs.accentColor
+          );
+        }
         this.scene.add(group);
         this.aircraftGroupMap.set(p.id, group);
       }
@@ -670,6 +722,11 @@ export class WorldRenderer {
         const mesh = this.aircraftGroupMap.get(cachedId);
         if (mesh) this.scene.remove(mesh);
         this.aircraftGroupMap.delete(cachedId);
+        const voxState = this.voxelStateMap.get(cachedId);
+        if (voxState) {
+          disposeVoxelMesh(voxState);
+          this.voxelStateMap.delete(cachedId);
+        }
       }
     }
 
@@ -700,7 +757,7 @@ export class WorldRenderer {
           const dz = p.z - playerPilot.z;
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
           
-          if (dist > 50 && dist < 2200) {
+          if (dist > 50 && dist < (playerPilot.specs.radarRange ?? 4500)) {
             const dir = new THREE.Vector3(dx, dy, dz).normalize();
             const dot = forward.dot(dir);
             if (dot > bestDot) {
@@ -713,15 +770,28 @@ export class WorldRenderer {
       }
     }
 
-    if (lockedAdv) {
-      const muzzleSpeed = 850;
-      const t = lockedDist / muzzleSpeed;
+    if (lockedAdv && playerPilot) {
+      const adv = lockedAdv as Pilot;
 
-      const futureX = (lockedAdv as Pilot).x + (lockedAdv as Pilot).vx * t;
-      const futureY = (lockedAdv as Pilot).y + (lockedAdv as Pilot).vy * t;
-      const futureZ = (lockedAdv as Pilot).z + (lockedAdv as Pilot).vz * t;
+      const primaryWeapon = playerPilot.specs.weapons.find(
+        w => w !== WeaponType.ROCKET && w !== WeaponType.BOMB && (playerPilot.ammo[w] ?? 0) > 0
+      );
+      const muzzleVelocity = primaryWeapon ? WEAPON_SPECS_MAP[primaryWeapon].muzzleVelocity : 820;
 
-      const pTarget = new THREE.Vector3((lockedAdv as Pilot).x, (lockedAdv as Pilot).y, (lockedAdv as Pilot).z).project(this.camera);
+      const tdx = adv.x - playerPilot.x;
+      const tdy = adv.y - playerPilot.y;
+      const tdz = adv.z - playerPilot.z;
+      const toTarget = new THREE.Vector3(tdx, tdy, tdz).normalize();
+      const closingSpeed = toTarget.dot(
+        new THREE.Vector3(playerPilot.vx, playerPilot.vy, playerPilot.vz)
+      );
+      const t = lockedDist / Math.max(1, muzzleVelocity + closingSpeed);
+
+      const futureX = adv.x + adv.vx * t;
+      const futureY = adv.y + adv.vy * t;
+      const futureZ = adv.z + adv.vz * t;
+
+      const pTarget = new THREE.Vector3(adv.x, adv.y, adv.z).project(this.camera);
       const pLead = new THREE.Vector3(futureX, futureY, futureZ).project(this.camera);
 
       if (pTarget.z <= 1.0 && pLead.z <= 1.0) {
@@ -730,7 +800,7 @@ export class WorldRenderer {
           y: (-pTarget.y * 0.5 + 0.5) * 100,
           sX: (pLead.x * 0.5 + 0.5) * 100,
           sY: (-pLead.y * 0.5 + 0.5) * 100,
-          name: (lockedAdv as Pilot).name,
+          name: adv.name,
           distance: Math.round(lockedDist)
         };
       } else {
@@ -1028,7 +1098,7 @@ export class WorldRenderer {
     // Kicks in above 450 km/h and peaks near VNE.
     this.cameraShakeTime += dt;
     const shakeKmph = new THREE.Vector3(playerPilot.vx, playerPilot.vy, playerPilot.vz).length() * 3.6;
-    const shakeStrength = THREE.MathUtils.clamp((shakeKmph - 450) / 200, 0, 1) * 0.28;
+    const shakeStrength = THREE.MathUtils.clamp((shakeKmph - 500) / 250, 0, 1) * 0.10;
     if (shakeStrength > 0) {
       const t = this.cameraShakeTime;
       this.camera.position.x += Math.sin(t * 18.7) * Math.sin(t * 6.3) * shakeStrength;

@@ -21,7 +21,7 @@ import {
 } from "./types";
 import { MainMenu } from "./components/MainMenu";
 import { PilotRegistration } from "./components/PilotRegistration";
-import { GameHUD } from "./components/GameHUD";
+import { GameHUD, ChatMessage } from "./components/GameHUD";
 import { GameEngine } from "./game/gameEngine";
 import { WorldRenderer } from "./game/worldRenderer";
 import { InputManager } from "./game/inputManager";
@@ -36,6 +36,13 @@ import { Award, Trophy, ArrowRight } from "lucide-react";
 // LocalStorage persistent store key
 const STORAGE_KEY = "airframe_io_save_data";
 const MULTIPLAYER_SESSION_KEY = "airframe_io_multiplayer_session";
+
+const GHOST_PREFIXES = ["GHOST","RAVEN","VIPER","COBRA","EAGLE","SHARK","STORM","BLADE","IRON","WOLF","NOVA","APEX","ZERO","JADE","ONYX","LYNX","KITE","HAWK","FURY","FLAK"];
+function generateCallsign(): string {
+  const prefix = GHOST_PREFIXES[Math.floor(Math.random() * GHOST_PREFIXES.length)];
+  const num = 1000 + Math.floor(Math.random() * 8999);
+  return `${prefix}_${num}`;
+}
 
 function getMultiplayerSessionId(): string {
   const existing = localStorage.getItem(MULTIPLAYER_SESSION_KEY);
@@ -128,6 +135,9 @@ export default function App() {
     key: 0
   });
 
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const multiplayerSocketRef = useRef<WebSocket | null>(null);
+
   const [isPaused, setIsPaused] = useState(false);
   const isPausedRef = useRef(false);
   const [showTacticalMap, setShowTacticalMap] = useState(false);
@@ -160,6 +170,17 @@ export default function App() {
     );
   };
 
+  // Presence ping: registers this client as online while on the main menu so
+  // lobby viewers count toward the total shown in the health endpoint
+  useEffect(() => {
+    if (isPlaying) return;
+    const sid = getMultiplayerSessionId();
+    const ping = () => fetch(`/api/presence?sid=${encodeURIComponent(sid)}`).catch(() => {});
+    ping();
+    const id = setInterval(ping, 30_000);
+    return () => clearInterval(id);
+  }, [isPlaying]);
+
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -185,21 +206,24 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hitmarker.key]);
 
-  // Load persistence
+  // Load persistence — auto-assign callsign so registration is never a gate
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        // Safely complete any missing keys
-        setProgression({
-          ...INITIAL_PROGRESSION,
-          ...parsed,
-          stats: { ...INITIAL_PROGRESSION.stats, ...(parsed.stats || {}) },
-          equippedMods: parsed.equippedMods || {},
-          unlockedPlanes: parsed.unlockedPlanes || ["falcon-mk2"]
-        });
+      const parsed = raw ? JSON.parse(raw) : null;
+      const base: UserProgression = {
+        ...INITIAL_PROGRESSION,
+        ...(parsed ?? {}),
+        stats: { ...INITIAL_PROGRESSION.stats, ...(parsed?.stats || {}) },
+        equippedMods: parsed?.equippedMods || {},
+        unlockedPlanes: parsed?.unlockedPlanes || ["falcon-mk2"]
+      };
+      if (!base.nickname) {
+        base.nickname = generateCallsign();
+        base.rankCode = base.rankCode || "CDT";
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
       }
+      setProgression(base);
     } catch (e) {
       console.warn("Failed loading progression save state", e);
     }
@@ -364,6 +388,7 @@ export default function App() {
       const wsUrl = `${protocol}${window.location.host}/multiplayer`;
       try {
         socket = new WebSocket(wsUrl);
+        multiplayerSocketRef.current = socket;
         socket.onerror = (err) => {
           console.warn("Multiplayer matchmaking offline or connectivity error. Operating in offline/local capability.", err);
         };
@@ -497,21 +522,24 @@ export default function App() {
           else if (msg.type === "player_updated") {
             const remote = engine.pilots.find(p => p.id === msg.id);
             if (remote) {
-              remote.x = msg.state.x;
-              remote.y = msg.state.y;
-              remote.z = msg.state.z;
+              // Snap non-positional state immediately
               remote.vx = msg.state.vx;
               remote.vy = msg.state.vy;
               remote.vz = msg.state.vz;
-              remote.pitch = msg.state.pitch;
-              remote.yaw = msg.state.yaw;
-              remote.roll = msg.state.roll;
               remote.throttle = msg.state.throttle;
               remote.damage = msg.state.damage;
               remote.ammo = msg.state.ammo as typeof remote.ammo;
               remote.score = msg.state.score;
               remote.kills = msg.state.kills;
               remote.deaths = msg.state.deaths;
+              // Store snapshot for dead-reckoning; position/orientation blended in the loop
+              const sq = new Quaternion().setFromEuler(new Euler(msg.state.pitch, msg.state.yaw, msg.state.roll, "YXZ"));
+              remote.netSnap = {
+                x: msg.state.x, y: msg.state.y, z: msg.state.z,
+                vx: msg.state.vx, vy: msg.state.vy, vz: msg.state.vz,
+                qx: sq.x, qy: sq.y, qz: sq.z, qw: sq.w,
+                at: performance.now()
+              };
             }
           }
 
@@ -566,23 +594,32 @@ export default function App() {
 
           else if (msg.type === "bots_updated") {
             if (!engine.isHost) {
+              const botSnapAt = performance.now();
               msg.bots.forEach((syncBot: any) => {
                 const localBot = engine.pilots.find(p => p.id === syncBot.id);
                 if (localBot) {
-                  localBot.x = syncBot.x;
-                  localBot.y = syncBot.y;
-                  localBot.z = syncBot.z;
                   localBot.vx = syncBot.vx;
                   localBot.vy = syncBot.vy;
                   localBot.vz = syncBot.vz;
-                  localBot.pitch = syncBot.pitch;
-                  localBot.yaw = syncBot.yaw;
-                  localBot.roll = syncBot.roll;
                   localBot.throttle = syncBot.throttle;
                   localBot.damage = syncBot.damage;
+                  const bq = new Quaternion().setFromEuler(new Euler(syncBot.pitch, syncBot.yaw, syncBot.roll, "YXZ"));
+                  localBot.netSnap = {
+                    x: syncBot.x, y: syncBot.y, z: syncBot.z,
+                    vx: syncBot.vx, vy: syncBot.vy, vz: syncBot.vz,
+                    qx: bq.x, qy: bq.y, qz: bq.z, qw: bq.w,
+                    at: botSnapAt
+                  };
                 }
               });
             }
+          }
+          if (msg.type === "chat_broadcast") {
+            setChatMessages(prev => [...prev.slice(-49), {
+              sender: msg.senderName,
+              text: msg.text,
+              ts: Date.now()
+            }]);
           }
         } catch (err) {
           console.error("Multiplayer message parse/apply error:", err);
@@ -633,6 +670,10 @@ export default function App() {
         }
       };
     }
+
+    engine.onVoxelHit = (targetId, localOffsetMeters, blastMeters) => {
+      renderer3D.deformAircraft(targetId, localOffsetMeters, blastMeters);
+    };
   }
 
     // 4. RAF Loop
@@ -669,7 +710,8 @@ export default function App() {
       ax: number; ay: number;
     };
     let telemPending: TelemetryFrame[] = [];
-    const telemWs = new WebSocket(`ws://${location.host}/telemetry-ws`);
+    const telemWsProto = location.protocol === "https:" ? "wss://" : "ws://";
+    const telemWs = new WebSocket(`${telemWsProto}${location.host}/telemetry-ws`);
     const roundTelemetry = (value: number, decimals: number) => {
       const scale = 10 ** decimals;
       return Math.round(value * scale) / scale;
@@ -732,6 +774,11 @@ export default function App() {
       lockText.textContent = `RADAR TRACER LOCK • ${indicator.name}`;
     };
 
+    // Reusable objects for remote interpolation — allocated once to avoid GC pressure
+    const _netQ = new Quaternion();
+    const _netQSnap = new Quaternion();
+    const _netEuler = new Euler();
+
     const loop = (now: number) => {
       const dt = Math.min(0.08, (now - lastTime) / 1000);
       lastTime = now;
@@ -790,7 +837,7 @@ export default function App() {
       playerWasDead = playerIsDead;
 
       // Throttled: Send our local state updates to multiplayer server (35ms intervals)
-      if (isMultiplayer && socket && socket.readyState === WebSocket.OPEN && now - lastSendTime > 35) {
+      if (isMultiplayer && socket && socket.readyState === WebSocket.OPEN && now - lastSendTime > 16) {
         lastSendTime = now;
         if (player) {
           socket.send(JSON.stringify({
@@ -855,6 +902,29 @@ export default function App() {
             ? { ...engine.campaignState }
             : null
         });
+      }
+
+      // Dead-reckon remote pilots: extrapolate from last network snapshot using that
+      // snapshot's velocity, then blend the displayed position toward the extrapolated
+      // position with exponential smoothing so corrections arrive without a hard snap.
+      if (isMultiplayer) {
+        const snapNow = performance.now();
+        const alpha = 1 - Math.exp(-dt * 25);
+        for (const pilot of engine.pilots) {
+          if (pilot.id === "player" || !pilot.netSnap) continue;
+          const snap = pilot.netSnap;
+          const age = (snapNow - snap.at) / 1000;
+          pilot.x += (snap.x + snap.vx * age - pilot.x) * alpha;
+          pilot.y += (snap.y + snap.vy * age - pilot.y) * alpha;
+          pilot.z += (snap.z + snap.vz * age - pilot.z) * alpha;
+          _netQSnap.set(snap.qx, snap.qy, snap.qz, snap.qw);
+          _netQ.setFromEuler(_netEuler.set(pilot.pitch, pilot.yaw, pilot.roll, "YXZ"));
+          _netQ.slerp(_netQSnap, alpha);
+          _netEuler.setFromQuaternion(_netQ, "YXZ");
+          pilot.pitch = _netEuler.x;
+          pilot.yaw = _netEuler.y;
+          pilot.roll = _netEuler.z;
+        }
       }
 
       // Relay coordinates into Three Renderer
@@ -1133,6 +1203,23 @@ export default function App() {
             mapId={activeEngine.selectedMapId}
             showTacticalMap={showTacticalMap}
             onCloseTacticalMap={() => setShowTacticalMap(false)}
+            chatMessages={chatMessages}
+            onSendChat={(text) => {
+              const sock = multiplayerSocketRef.current;
+              if (sock && sock.readyState === WebSocket.OPEN) {
+                sock.send(JSON.stringify({
+                  type: "chat",
+                  senderName: progression.nickname || "PILOT",
+                  text
+                }));
+              } else {
+                setChatMessages(prev => [...prev.slice(-49), {
+                  sender: progression.nickname || "PILOT",
+                  text,
+                  ts: Date.now()
+                }]);
+              }
+            }}
           />
         </div>
       )}
@@ -1237,15 +1324,15 @@ export default function App() {
         </div>
       )}
 
-      {/* PILOT REGISTRATION AND DATABASE SYNC OVERLAY */}
-      {(!isPlaying && !showDebrief && (!progression.nickname || showRegistration)) && (
+      {/* PILOT REGISTRATION — opt-in via PROFILE button, never a gate */}
+      {(!isPlaying && !showDebrief && showRegistration) && (
         <PilotRegistration
           progression={progression}
           onComplete={(updated) => {
             saveProgression(updated);
             setShowRegistration(false);
           }}
-          onClose={progression.nickname ? () => setShowRegistration(false) : undefined}
+          onClose={() => setShowRegistration(false)}
         />
       )}
 

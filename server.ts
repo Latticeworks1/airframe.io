@@ -45,7 +45,7 @@ interface Room {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT ?? "3000", 10);
 
   // Core HTTP server wrapper
   const server = http.createServer(app);
@@ -476,9 +476,54 @@ async function startServer() {
     });
   });
 
-  // API Route for quick status check
+  let peakConcurrent = 0;
+
+  // Tracks clients on the main menu (not yet in a game room)
+  const lobbyPings = new Map<string, number>();
+  setInterval(() => {
+    const cutoff = Date.now() - 90_000;
+    for (const [k, v] of lobbyPings) if (v < cutoff) lobbyPings.delete(k);
+  }, 30_000);
+
+  app.get("/api/presence", (req, res) => {
+    const sid = req.query.sid as string | undefined;
+    if (sid && sid.length < 128) lobbyPings.set(sid, Date.now());
+    res.json({ ok: true });
+  });
+
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", activeRooms: rooms.size });
+    const byQueue: Record<string, number> = {};
+    let inGame = 0;
+    rooms.forEach(room => {
+      byQueue[room.queueKey] = (byQueue[room.queueKey] ?? 0) + room.players.size;
+      inGame += room.players.size;
+    });
+    // Lobby presences are clients on the main menu not yet in a room
+    const gameSessionIds = new Set(activeSessions.keys());
+    let lobbyOnly = 0;
+    const cutoff = Date.now() - 90_000;
+    for (const [sid, ts] of lobbyPings) {
+      if (!gameSessionIds.has(sid) && ts >= cutoff) lobbyOnly++;
+    }
+    const total = inGame + lobbyOnly;
+    if (total > peakConcurrent) peakConcurrent = total;
+    res.json({ status: "ok", totalPlayers: total, inGame, lobbyOnly, peakConcurrent, byQueue });
+  });
+
+  // Sanitized live game preview — positions and headings, no identifying info
+  app.get("/api/preview", (req, res) => {
+    const busiest = Array.from(rooms.values()).sort((a, b) => b.players.size - a.players.size)[0];
+    if (!busiest) { res.json({ players: [] }); return; }
+    const players = Array.from(busiest.players.values()).map(p => ({
+      team: p.team,
+      x: Math.round(p.x),
+      y: Math.round(p.y),
+      z: Math.round(p.z),
+      vx: Math.round(p.vx),
+      vz: Math.round(p.vz),
+      a: p.aircraftId
+    }));
+    res.json({ queueKey: busiest.queueKey, players });
   });
 
   const telemPath = path.join(tmpdir(), "airframe-telemetry.jsonl");
@@ -501,6 +546,13 @@ async function startServer() {
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`[Airframe Server] Online on http://localhost:${PORT}`);
   });
+
+  const shutdown = () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 5000).unref();
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 startServer();
