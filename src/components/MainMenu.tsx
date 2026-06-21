@@ -85,9 +85,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
   const [claimedDaily, setClaimedDaily] = useState(false);
   const [liveCounts, setLiveCounts] = useState<{ total: number; byQueue: Record<string, number> }>({ total: 0, byQueue: {} });
-  const [liveBlips, setLiveBlips] = useState<{ team: 1 | 2; nx: number; ny: number; hdx: number; hdz: number }[]>([]);
-  const [liveMapId, setLiveMapId] = useState<string | null>(null);
-  const liveCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [liveBlips, setLiveBlips] = useState<{ team: 1 | 2; nx: number; ny: number }[]>([]);
 
   useEffect(() => {
     const pollHealth = async () => {
@@ -105,18 +103,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         if (r.ok) {
           const d = await r.json();
           const WORLD_R = 18000;
-          const blips = (d.players ?? []).map((p: { team: number; x: number; z: number; vx: number; vz: number }) => {
-            const spd = Math.sqrt(p.vx * p.vx + p.vz * p.vz) || 1;
-            return {
-              team: p.team as 1 | 2,
-              nx: Math.min(1, Math.max(0, (p.x + WORLD_R) / (WORLD_R * 2))),
-              ny: Math.min(1, Math.max(0, (p.z + WORLD_R) / (WORLD_R * 2))),
-              hdx: p.vx / spd,
-              hdz: p.vz / spd
-            };
-          });
+          const blips = (d.players ?? []).map((p: { team: number; x: number; z: number }) => ({
+            team: p.team as 1 | 2,
+            nx: Math.min(1, Math.max(0, (p.x + WORLD_R) / (WORLD_R * 2))),
+            ny: Math.min(1, Math.max(0, (p.z + WORLD_R) / (WORLD_R * 2)))
+          }));
           setLiveBlips(blips);
-          setLiveMapId(d.queueKey ? (d.queueKey as string).split("_")[0] : null);
         }
       } catch { /* offline */ }
     };
@@ -126,71 +118,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
     return () => { clearInterval(hi); clearInterval(pi); };
   }, []);
 
-  // Draw live game preview onto canvas whenever blips update
-  useEffect(() => {
-    const canvas = liveCanvasRef.current;
-    if (!canvas || liveBlips.length === 0) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const W = canvas.width  = canvas.offsetWidth;
-    const H = canvas.height = canvas.offsetHeight;
-
-    // Background atmosphere based on live map
-    const isDesert = liveMapId?.includes("desert");
-    const isAlpine = liveMapId?.includes("alpine");
-    const isStorm  = liveMapId?.includes("storm");
-    const sky0 = isDesert ? "#2c1c0a" : isAlpine ? "#0f172a" : isStorm ? "#020617" : "#014e7a";
-    const sky1 = isDesert ? "#ca6a14" : isAlpine ? "#3b82f6" : isStorm ? "#0f172a" : "#0ea5e9";
-    const grad = ctx.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, sky0);
-    grad.addColorStop(1, sky1);
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-
-    // Subtle grid
-    ctx.strokeStyle = "rgba(255,255,255,0.04)";
-    ctx.lineWidth = 1;
-    const gridStep = Math.round(W / 18);
-    for (let gx = 0; gx < W; gx += gridStep) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
-    for (let gy = 0; gy < H; gy += gridStep) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
-
-    // Aircraft chevrons
-    for (const b of liveBlips) {
-      const px = b.nx * W;
-      const py = b.ny * H;
-      const col = b.team === 1 ? "#38bdf8" : "#f87171";
-      const angle = Math.atan2(b.hdx, b.hdz);
-
-      // Glow halo
-      const halo = ctx.createRadialGradient(px, py, 0, px, py, 18);
-      halo.addColorStop(0, b.team === 1 ? "rgba(56,189,248,0.25)" : "rgba(248,113,113,0.25)");
-      halo.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = halo;
-      ctx.beginPath(); ctx.arc(px, py, 18, 0, Math.PI * 2); ctx.fill();
-
-      // Chevron shape
-      ctx.save();
-      ctx.translate(px, py);
-      ctx.rotate(angle);
-      ctx.fillStyle = col;
-      ctx.beginPath();
-      ctx.moveTo(0, -9);
-      ctx.lineTo(5, 6);
-      ctx.lineTo(0, 3);
-      ctx.lineTo(-5, 6);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
-
-    // Scanline vignette
-    const vg = ctx.createRadialGradient(W/2, H/2, H*0.2, W/2, H/2, H*0.85);
-    vg.addColorStop(0, "rgba(0,0,0,0)");
-    vg.addColorStop(1, "rgba(3,6,12,0.75)");
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, W, H);
-  }, [liveBlips, liveMapId]);
 
   // Ready Room UI Popups States
   const [_showModeDropdown, setShowModeDropdown] = useState(false);
@@ -406,24 +333,30 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       id="lobby-root"
       className="relative h-screen w-full bg-[#03060c] text-slate-100 font-sans flex flex-col justify-between overflow-hidden select-none"
     >
-      {/* BACKGROUND: live match canvas when a game is running, 3D plane preview otherwise */}
+      {/* 3D WEBGL CARRIER PREVIEW BACKGROUND */}
       <div className="absolute inset-0 z-0">
-        {liveBlips.length > 0 ? (
-          <canvas
-            ref={liveCanvasRef}
-            className="absolute inset-0 w-full h-full"
-            aria-hidden
-          />
-        ) : (
-          <PlanePreview3D planeId={selectedPlaneId} fullScreen={true} skinId={activeSkinId} mapId={selectedMapId} />
-        )}
+        <PlanePreview3D planeId={selectedPlaneId} fullScreen={true} skinId={activeSkinId} mapId={selectedMapId} />
         <div className="absolute inset-0 bg-radial-gradient from-transparent via-slate-950/20 to-[#03050a]/90 pointer-events-none" />
         <div className="absolute inset-x-0 bottom-0 h-96 bg-gradient-to-t from-[#03060c] via-[#03060c]/60 to-transparent pointer-events-none" />
 
+        {/* Live battle blips — shown when an active game is running */}
         {liveBlips.length > 0 && (
-          <div className="absolute bottom-20 right-8 flex items-center gap-1.5 pointer-events-none" aria-hidden>
-            <div className="w-1 h-1 rounded-full bg-emerald-400 animate-ping" style={{ animationDuration: "2s" }} />
-            <span className="text-[6.5px] font-black text-emerald-400/70 uppercase font-mono tracking-widest">LIVE MATCH IN PROGRESS</span>
+          <div className="absolute inset-0 pointer-events-none" aria-hidden>
+            {liveBlips.map((b, i) => (
+              <div
+                key={i}
+                className="absolute"
+                style={{ left: `${b.nx * 100}%`, top: `${b.ny * 100}%` }}
+              >
+                <div className={`w-1.5 h-1.5 rounded-full ${b.team === 1 ? "bg-sky-400" : "bg-red-400"} opacity-80 animate-ping`}
+                  style={{ animationDuration: `${1.8 + (i % 3) * 0.4}s`, animationDelay: `${(i * 0.17) % 1}s` }}
+                />
+              </div>
+            ))}
+            <div className="absolute bottom-20 right-8 flex items-center gap-1.5">
+              <div className="w-1 h-1 rounded-full bg-emerald-400 animate-ping" style={{ animationDuration: "2s" }} />
+              <span className="text-[6.5px] font-black text-emerald-400/70 uppercase font-mono tracking-widest">LIVE MATCH IN PROGRESS</span>
+            </div>
           </div>
         )}
 

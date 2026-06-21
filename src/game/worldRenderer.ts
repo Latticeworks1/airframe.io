@@ -147,7 +147,7 @@ export class WorldRenderer {
     const hasWebGPU = typeof navigator !== "undefined" && !!(navigator as any).gpu;
     try {
       this.renderer = new WebGPURenderer({
-        antialias: false,
+        antialias: true,
         powerPreference: "high-performance",
         forceWebGL: !hasWebGPU
       });
@@ -156,7 +156,7 @@ export class WorldRenderer {
       console.warn("WebGPURenderer WebGPU backend failed to init, trying WebGL fallback...", err);
       try {
         this.renderer = new WebGPURenderer({
-          antialias: false,
+          antialias: true,
           powerPreference: "high-performance",
           forceWebGL: true
         });

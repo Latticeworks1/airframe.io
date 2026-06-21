@@ -47,6 +47,8 @@ interface HUDProps {
   mapId: string;
   showTacticalMap: boolean;
   onCloseTacticalMap: () => void;
+  chatMessages?: ChatMessage[];
+  onSendChat?: (text: string) => void;
 }
 
 function clamp(n: number, min: number, max: number) {
@@ -243,10 +245,11 @@ const BombSightOverlay: React.FC<{
           <circle cx="500" cy="500" r="310" strokeWidth="2" />
           <circle cx="500" cy="500" r="218" strokeWidth="1.5" strokeDasharray="7 12" />
           <circle cx="500" cy="500" r="86" strokeWidth="2" />
-          <line x1="120" y1="500" x2="420" y2="500" strokeWidth="2" />
-          <line x1="580" y1="500" x2="880" y2="500" strokeWidth="2" />
-          <line x1="500" y1="120" x2="500" y2="420" strokeWidth="2" />
-          <line x1="500" y1="580" x2="500" y2="880" strokeWidth="2" />
+          {/* Leave the cardinal readouts clear instead of drawing the axes through them. */}
+          <line x1="180" y1="500" x2="420" y2="500" strokeWidth="2" />
+          <line x1="580" y1="500" x2="820" y2="500" strokeWidth="2" />
+          <line x1="500" y1="164" x2="500" y2="420" strokeWidth="2" />
+          <line x1="500" y1="580" x2="500" y2="838" strokeWidth="2" />
           <path d="M440 500H560M500 440V560" strokeWidth="3" />
           <path d="M452 365L500 340L548 365M452 635L500 660L548 635" strokeWidth="2" />
 
@@ -391,20 +394,51 @@ const TacticalMapOverlay: React.FC<{
                 );
               })}
 
-              {pilots.filter(pilot => pilot.damage.fuselage > 0).map(pilot => {
-                const point = project(pilot.x, pilot.z);
-                const color = pilot.team === 1 ? "#fb7185" : "#38bdf8";
-                return (
-                  <g key={pilot.id} transform={`translate(${point.x} ${point.y}) rotate(${pilot.yaw * 180 / Math.PI})`}>
-                    <path
-                      d="M0 -13L8 10L0 6L-8 10Z"
-                      fill={pilot.id === "player" ? "#facc15" : color}
-                      stroke="#020617"
-                      strokeWidth="2"
-                    />
-                  </g>
-                );
-              })}
+              {(() => {
+                const playerPilotOnMap = pilots.find(p => p.id === "player");
+                const myTeam = playerPilotOnMap?.team ?? 1;
+                return pilots.filter(p => p.damage.fuselage > 0).map(pilot => {
+                  const pt = project(pilot.x, pilot.z);
+                  const isMe = pilot.id === "player";
+                  const allied = pilot.team === myTeam;
+                  const teamColor = pilot.team === 1 ? "#fb7185" : "#38bdf8";
+                  const deg = pilot.yaw * 180 / Math.PI;
+
+                  if (pilot.isBot) {
+                    // Bots: hollow circle with small cross
+                    const botColor = allied ? teamColor : teamColor;
+                    return (
+                      <g key={pilot.id} transform={`translate(${pt.x} ${pt.y})`}>
+                        <circle r="7" fill="none" stroke={botColor} strokeWidth="1.5" strokeOpacity="0.6" strokeDasharray="4 2" />
+                        <line x1="-4" y1="0" x2="4" y2="0" stroke={botColor} strokeWidth="1" strokeOpacity="0.6" />
+                        <line x1="0" y1="-4" x2="0" y2="4" stroke={botColor} strokeWidth="1" strokeOpacity="0.6" />
+                      </g>
+                    );
+                  }
+
+                  // Real players: solid arrow
+                  const fill = isMe ? "#facc15" : teamColor;
+                  return (
+                    <g key={pilot.id} transform={`translate(${pt.x} ${pt.y}) rotate(${deg})`}>
+                      <path d="M0 -14L9 11L0 7L-9 11Z" fill={fill} stroke="#020617" strokeWidth="2" />
+                      {/* Allied player name — not shown for enemies (CoD convention) */}
+                      {allied && !isMe && (
+                        <text
+                          x="0" y="-20"
+                          textAnchor="middle"
+                          fill={teamColor}
+                          fontSize="9"
+                          fontWeight="700"
+                          fontFamily="monospace"
+                          transform={`rotate(${-deg})`}
+                        >
+                          {pilot.name}
+                        </text>
+                      )}
+                    </g>
+                  );
+                });
+              })()}
             </svg>
           </div>
 
@@ -440,10 +474,12 @@ const TacticalMapOverlay: React.FC<{
             <div className="mt-6 text-[8px] font-black tracking-[0.2em] text-slate-500 uppercase">
               Legend
             </div>
-            <div className="mt-3 space-y-3 text-[9px] text-slate-300">
-              <div className="flex items-center gap-3"><span className="text-amber-300">▲</span> Your aircraft</div>
-              <div className="flex items-center gap-3"><span className="text-rose-400">▲</span> Red team</div>
-              <div className="flex items-center gap-3"><span className="text-sky-400">▲</span> Blue team</div>
+            <div className="mt-3 space-y-2.5 text-[9px] text-slate-300">
+              <div className="flex items-center gap-3"><span className="text-amber-300">▲</span> You</div>
+              <div className="flex items-center gap-3"><span className="text-rose-400">▲</span> Red player</div>
+              <div className="flex items-center gap-3"><span className="text-sky-400">▲</span> Blue player</div>
+              <div className="flex items-center gap-3"><span className="text-rose-400 opacity-60">⊕</span> Red bot</div>
+              <div className="flex items-center gap-3"><span className="text-sky-400 opacity-60">⊕</span> Blue bot</div>
               <div className="flex items-center gap-3"><span className="text-emerald-300">◇</span> Ground objective</div>
             </div>
           </aside>
@@ -476,7 +512,7 @@ const LeadProjector: React.FC = () => {
           style={{ boxShadow: "0 0 0 1px #000, inset 0 0 0 1px #000" }}
         >
           <div
-            className="w-1.5 h-1.5 bg-amber-400 rounded-full"
+            className="w-1.5 h-1.5 bg-red-500 rounded-full"
             style={{ boxShadow: "0 0 0 1px #000" }}
           />
 
@@ -649,6 +685,8 @@ export const GameHUD: React.FC<HUDProps> = ({
   mapId,
   showTacticalMap,
   onCloseTacticalMap,
+  chatMessages = [],
+  onSendChat,
 }) => {
   if (!playerPilot) return null;
 
@@ -1045,6 +1083,70 @@ export const GameHUD: React.FC<HUDProps> = ({
         </div>
       )}
 
+      {/* In-game chat overlay */}
+      {onSendChat && (
+        <ChatOverlay messages={chatMessages} onSend={onSendChat} />
+      )}
+
+    </div>
+  );
+};
+
+const ChatOverlay: React.FC<{ messages: ChatMessage[]; onSend: (t: string) => void }> = ({ messages, onSend }) => {
+  const [input, setInput] = React.useState("");
+  const [open, setOpen] = React.useState(false);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const now = Date.now();
+  const recent = messages.filter(m => now - m.ts < 10000).slice(-5);
+
+  const submit = () => {
+    const text = input.trim();
+    if (text) { onSend(text); setInput(""); }
+    setOpen(false);
+  };
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "KeyT" && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        setOpen(true);
+        setTimeout(() => inputRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  return (
+    <div className="absolute left-3 bottom-28 z-50 w-72 flex flex-col gap-1 pointer-events-none">
+      <div className="flex flex-col gap-0.5">
+        {recent.map((m, i) => (
+          <div key={i} className="text-[9px] font-mono bg-black/45 rounded px-1.5 py-0.5 leading-snug">
+            <span className="text-amber-400 font-black">{m.sender}</span>
+            <span className="text-slate-200 ml-1">{m.text}</span>
+          </div>
+        ))}
+      </div>
+      {open && (
+        <div className="pointer-events-auto flex items-center gap-1 bg-black/70 border border-slate-700 rounded px-2 py-1 mt-0.5">
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") submit();
+              if (e.key === "Escape") { setOpen(false); setInput(""); }
+            }}
+            maxLength={120}
+            placeholder="Press Enter to send..."
+            className="flex-1 bg-transparent text-[9px] text-white outline-none font-mono placeholder-slate-500"
+          />
+          <span className="text-[7px] text-slate-500 font-mono">ESC</span>
+        </div>
+      )}
+      {!open && recent.length === 0 && (
+        <div className="text-[6.5px] text-slate-600 font-mono">[T] CHAT</div>
+      )}
     </div>
   );
 };
