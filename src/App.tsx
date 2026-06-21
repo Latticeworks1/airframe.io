@@ -154,7 +154,7 @@ export default function App() {
   const setActiveCameraMode = (next: CameraMode) => {
     cameraModeRef.current = next;
     setCameraMode(next);
-    renderer3DRef.current?.setCameraMode(next, playerRef.current?.id);
+    renderer3DRef.current?.setCameraMode(next, "player");
   };
 
   const toggleCameraMode = () => {
@@ -397,7 +397,7 @@ export default function App() {
       console.log("WebGL World initialized successfully.");
     });
     renderer3DRef.current = renderer3D;
-    renderer3D.setCameraMode(cameraModeRef.current, playerRef.current?.id);
+    renderer3D.setCameraMode(cameraModeRef.current, "player");
 
     // 2. Initialize Game Rules Engine
     const engine = new GameEngine(
