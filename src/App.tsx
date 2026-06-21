@@ -21,7 +21,7 @@ import {
 } from "./types";
 import { MainMenu } from "./components/MainMenu";
 import { PilotRegistration } from "./components/PilotRegistration";
-import { GameHUD } from "./components/GameHUD";
+import { GameHUD, ChatMessage } from "./components/GameHUD";
 import { GameEngine } from "./game/gameEngine";
 import { WorldRenderer } from "./game/worldRenderer";
 import { InputManager } from "./game/inputManager";
@@ -134,6 +134,9 @@ export default function App() {
     type: "air",
     key: 0
   });
+
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const multiplayerSocketRef = useRef<WebSocket | null>(null);
 
   const [isPaused, setIsPaused] = useState(false);
   const isPausedRef = useRef(false);
@@ -374,6 +377,7 @@ export default function App() {
       const wsUrl = `${protocol}${window.location.host}/multiplayer`;
       try {
         socket = new WebSocket(wsUrl);
+        multiplayerSocketRef.current = socket;
         socket.onerror = (err) => {
           console.warn("Multiplayer matchmaking offline or connectivity error. Operating in offline/local capability.", err);
         };
@@ -593,6 +597,13 @@ export default function App() {
                 }
               });
             }
+          }
+          if (msg.type === "chat_broadcast") {
+            setChatMessages(prev => [...prev.slice(-49), {
+              sender: msg.senderName,
+              text: msg.text,
+              ts: Date.now()
+            }]);
           }
         } catch (err) {
           console.error("Multiplayer message parse/apply error:", err);
@@ -1144,6 +1155,23 @@ export default function App() {
             mapId={activeEngine.selectedMapId}
             showTacticalMap={showTacticalMap}
             onCloseTacticalMap={() => setShowTacticalMap(false)}
+            chatMessages={chatMessages}
+            onSendChat={(text) => {
+              const sock = multiplayerSocketRef.current;
+              if (sock && sock.readyState === WebSocket.OPEN) {
+                sock.send(JSON.stringify({
+                  type: "chat",
+                  senderName: progression.nickname || "PILOT",
+                  text
+                }));
+              } else {
+                setChatMessages(prev => [...prev.slice(-49), {
+                  sender: progression.nickname || "PILOT",
+                  text,
+                  ts: Date.now()
+                }]);
+              }
+            }}
           />
         </div>
       )}
