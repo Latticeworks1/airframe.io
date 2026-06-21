@@ -57,7 +57,7 @@ async function startServer() {
   // In-memory rooms for matches
   const rooms = new Map<string, Room>();
   const activeSessions = new Map<string, WebSocket>();
-  const MAX_PLAYERS_PER_ROOM = 12;
+  const MAX_PLAYERS_PER_ROOM = 32; // must match ROOM_SIZE in gameEngine.ts
   let roomSequence = 0;
 
   // Dedicated telemetry WebSocket — streams frames straight to telemetry.jsonl in real time.
@@ -450,6 +450,9 @@ async function startServer() {
       if (currentRoomId && currentPilotId) {
         const room = rooms.get(currentRoomId);
         if (room) {
+          const leavingPlayer = room.players.get(currentPilotId);
+          const leavingTeam = leavingPlayer?.team ?? 1;
+
           room.players.delete(currentPilotId);
           room.sockets.delete(currentPilotId);
 
@@ -470,10 +473,11 @@ async function startServer() {
             });
           }
 
-          // Broadcast departure
+          // Broadcast departure — include team so host can fill the slot with a bot
           const leavePayload = JSON.stringify({
             type: "player_left",
-            id: currentPilotId
+            id: currentPilotId,
+            team: leavingTeam
           });
 
           room.sockets.forEach((s) => {

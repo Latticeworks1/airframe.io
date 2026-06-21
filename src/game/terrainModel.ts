@@ -256,10 +256,17 @@ export function getTerrainHeight(x: number, z: number, mapId: string): { height:
     }
   }
 
-  // Heightmap path: bilinear lookup if data is cached
+  // Heightmap path: bilinear lookup if data is cached.
+  // Clamp to waterHeight so ocean areas use the visual water surface, not the
+  // sub-water floor value encoded in the heightmap (which would be near 0 and
+  // disconnect physics ground from the rendered water plane at waterHeight+0.3).
   if (mapDef.terrain.kind === "heightmap") {
     const data = getHeightmapData(mapDef.terrain.path);
-    if (data) return { height: sampleHeightmapAt(data, x, z), isAirfield: false };
+    if (data) {
+      const raw = sampleHeightmapAt(data, x, z);
+      const h = Math.max(raw, mapDef.world.waterHeight);
+      return { height: h, isAirfield: false };
+    }
     return { height: mapDef.world.defaultGroundHeight, isAirfield: false };
   }
 

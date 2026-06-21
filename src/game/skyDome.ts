@@ -80,7 +80,8 @@ export function updateSkyDome(
   skyDome: SkyDomeMesh,
   camera: THREE.Camera,
   fog: THREE.Fog | null,
-  dt: number
+  dt: number,
+  farPlaneScale = 1.0
 ) {
   skyDome.position.copy(camera.position);
 
@@ -127,13 +128,11 @@ export function updateSkyDome(
     );
   }
 
-  // Extend camera draw distance so terrain near the map edge is never clipped
-  // when the player is high enough to see it. The base far of 15000 covers
-  // low-altitude combat; at altitude 1.0 the far plane scales to fit the full
-  // diagonal of a typical 18 000-unit-radius world.
+  // Dynamic far plane: base 65 000 m keeps the 32 000-unit world radius fully
+  // inside the frustum so fog can attenuate edges before the camera clips them.
   const cam = camera as THREE.PerspectiveCamera;
   if (cam.isPerspectiveCamera) {
-    cam.far = THREE.MathUtils.lerp(15000, 72000, altitude * altitude);
+    cam.far = THREE.MathUtils.lerp(65000, 130000, altitude * altitude) * farPlaneScale;
     cam.updateProjectionMatrix();
   }
 }

@@ -39,3 +39,11 @@
   animation: click-to-play 1.35s ease-in-out infinite;
   transform-origin: center;
 }
+
+@keyframes killPopupRise {
+  0%   { opacity: 0;   transform: translate(-50%, 0px)  scale(0.7); }
+  12%  { opacity: 1;   transform: translate(-50%, -8px) scale(1.15); }
+  30%  { opacity: 1;   transform: translate(-50%, -18px) scale(1.0); }
+  80%  { opacity: 0.85; transform: translate(-50%, -34px) scale(0.95); }
+  100% { opacity: 0;   transform: translate(-50%, -46px) scale(0.88); }
+}

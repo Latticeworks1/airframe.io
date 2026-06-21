@@ -303,26 +303,37 @@ export class GameEngine {
     this.pilots.push(playerPilot);
     this.playerPilotId = "player";
 
-    let adversaryCount = 7;
-    let teammateCount = 6;
-
     if (this.matchMode === MatchMode.DuelArena) {
-      adversaryCount = 1;
-      teammateCount = 0;
+      this.spawnBot(2, DEFAULT_AIRCRAFT[Math.floor(Math.random() * DEFAULT_AIRCRAFT.length)]);
       this.matchTimer = 180;
-    }
-
-    for (let i = 0; i < teammateCount; i++) {
-      const bSpecs = DEFAULT_AIRCRAFT[Math.floor(Math.random() * DEFAULT_AIRCRAFT.length)];
-      this.spawnBot(1, bSpecs);
-    }
-
-    for (let i = 0; i < adversaryCount; i++) {
-      const bSpecs = DEFAULT_AIRCRAFT[Math.floor(Math.random() * DEFAULT_AIRCRAFT.length)];
-      this.spawnBot(2, bSpecs);
+    } else {
+      // Fill the room with bots — real players displace them as they join.
+      // ROOM_SIZE must match MAX_PLAYERS_PER_ROOM in server.ts.
+      const ROOM_SIZE = 32;
+      const half = ROOM_SIZE / 2;
+      for (let i = 0; i < half - 1; i++) {
+        this.spawnBot(1, DEFAULT_AIRCRAFT[Math.floor(Math.random() * DEFAULT_AIRCRAFT.length)]);
+      }
+      for (let i = 0; i < half; i++) {
+        this.spawnBot(2, DEFAULT_AIRCRAFT[Math.floor(Math.random() * DEFAULT_AIRCRAFT.length)]);
+      }
     }
 
     this.buildObjectives();
+  }
+
+  // Called by the host client when a real player joins — evict one bot from that team.
+  public removeBot(team: 1 | 2): boolean {
+    const idx = this.pilots.findIndex(p => p.isBot && p.team === team);
+    if (idx === -1) return false;
+    this.pilots.splice(idx, 1);
+    return true;
+  }
+
+  // Called by the host client when a real player leaves — fill the empty slot.
+  public addBot(team: 1 | 2) {
+    const specs = DEFAULT_AIRCRAFT[Math.floor(Math.random() * DEFAULT_AIRCRAFT.length)];
+    this.spawnBot(team, specs);
   }
 
   private createEmptyDamage() {
