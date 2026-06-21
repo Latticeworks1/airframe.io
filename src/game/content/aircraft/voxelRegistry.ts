@@ -1,10 +1,16 @@
 import type { VoxelAircraftDef } from "../../voxelTypes";
 import { falconMk2Voxels } from "./falcon-mk2/voxels";
+import { grizzlyA1Voxels } from "./grizzly-a1/voxels";
+import { kite9Voxels } from "./kite-9/voxels";
+import { vulcan51Voxels } from "./vulcan-51/voxels";
+import { twinwolfVoxels } from "./twinwolf/voxels";
 
-// Add each aircraft's voxel definition here as they are authored.
-// Aircraft not listed fall back to the existing block-primitive renderer.
 const VOXEL_DEFS: VoxelAircraftDef[] = [
-  falconMk2Voxels
+  falconMk2Voxels,
+  grizzlyA1Voxels,
+  kite9Voxels,
+  vulcan51Voxels,
+  twinwolfVoxels,
 ];
 
 const _registry = new Map<string, VoxelAircraftDef>(
