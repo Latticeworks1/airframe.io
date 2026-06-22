@@ -50,10 +50,18 @@ export class TerrainBuilder {
     });
     this.groundMaterial = landMat;
 
+    const waterColor = new THREE.Color(
+      this.mapDef.visual.groundColor ?? this.mapDef.palette.colors[0] ?? "#0369a1"
+    );
+
     // Water surface
     {
-      const waterColor = new THREE.Color(this.mapDef.palette.colors[0] ?? "#0369a1");
-      const waterMat = new THREE.MeshBasicMaterial({ color: waterColor });
+      const waterMat = new THREE.MeshBasicMaterial({
+        color: waterColor,
+        polygonOffset: true,
+        polygonOffsetFactor: 2, // Pushed further away than landMat (which is 1) to prevent z-fighting at steep camera angles
+        polygonOffsetUnits: 2
+      });
       const waterMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(world.radius * 2, world.radius * 2),
         waterMat
@@ -63,17 +71,22 @@ export class TerrainBuilder {
       this.scene.add(waterMesh);
     }
 
-    // Infinite skirt plane
+    // Continue the surface beyond the finite terrain so its edge cannot show.
+    // This must start with the same color as the water and participate in scene
+    // fog. A solid fog-colored plane creates a bright horizontal shelf whenever
+    // the camera is close enough to the map boundary to see it before fog starts.
     {
       const skirtSize = world.radius * 12;
-      const fogColor = new THREE.Color(this.mapDef.atmosphere.fogColor);
-      const skirtMat = new THREE.MeshBasicMaterial({ color: fogColor, fog: false, depthWrite: false });
+      const skirtMat = new THREE.MeshBasicMaterial({
+        color: waterColor,
+        fog: true
+      });
       const skirtMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(skirtSize, skirtSize),
         skirtMat
       );
       skirtMesh.rotation.x = -Math.PI / 2;
-      skirtMesh.position.y = world.waterHeight - 20;
+      skirtMesh.position.y = world.waterHeight - 0.1;
       skirtMesh.renderOrder = -1;
       this.scene.add(skirtMesh);
     }
