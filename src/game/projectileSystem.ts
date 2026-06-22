@@ -12,6 +12,8 @@ import { MODIFICATIONS } from "./content/modifications/modificationData";
 import { FlightPhysicsEngine } from "./flightModel";
 import { generateId, closestPointOnSegment, getPlaneHitRadius, LOCAL_FORWARD } from "./math";
 import { getTerrainHeight } from "./terrainModel";
+import { getCockpitDef } from "./content/aircraft/cockpitRegistry";
+import { solveGunConvergenceLocal } from "./weaponConvergence";
 
 function beltName(belt: AmmoBelt | string): string {
   return String(belt);
@@ -19,12 +21,12 @@ function beltName(belt: AmmoBelt | string): string {
 
 export function getProjectileReleaseState(
   pilot: Pilot,
-  type: WeaponType
+  type: WeaponType,
+  hardpointIndex?: number
 ): { position: Vector3; velocity: Vector3 } {
   const rotation = new THREE.Quaternion().setFromEuler(
     new THREE.Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
   );
-  const direction = LOCAL_FORWARD.clone().applyQuaternion(rotation).normalize();
   const spec = WEAPON_SPECS_MAP[type];
   const aircraftDef = AIRCRAFT_DEFINITIONS.find(
     definition => definition.specs.id === pilot.aircraftId
@@ -37,19 +39,16 @@ export function getProjectileReleaseState(
       : type === WeaponType.ROCKET
         ? aircraftDef?.hardpoints.rocketPositions
         : aircraftDef?.hardpoints.positions;
+  const selectedHardpointIndex = hardpointIndex ?? releasedCount;
   const hardpoint = hardpointList?.length
-    ? hardpointList[releasedCount % hardpointList.length]
+    ? hardpointList[selectedHardpointIndex % hardpointList.length]
     : null;
+  const hardpointLocal = hardpoint
+    ? new Vector3(hardpoint.x, hardpoint.y, hardpoint.z)
+    : LOCAL_FORWARD.clone().multiplyScalar(12);
 
   const position = new Vector3(pilot.x, pilot.y, pilot.z);
-  if (hardpoint) {
-    position.add(
-      new Vector3(hardpoint.x, hardpoint.y, hardpoint.z)
-        .applyQuaternion(rotation)
-    );
-  } else {
-    position.addScaledVector(direction, 12);
-  }
+  position.add(hardpointLocal.clone().applyQuaternion(rotation));
 
   const velocity = new Vector3(pilot.vx, pilot.vy, pilot.vz);
   if (type === WeaponType.BOMB) {
@@ -59,6 +58,22 @@ export function getProjectileReleaseState(
         .multiplyScalar(3.5)
     );
   } else {
+    let directionLocal = LOCAL_FORWARD.clone();
+    const convergenceM = aircraftDef?.hardpoints.gunConvergenceM;
+    const cockpitDef = aircraftDef ? getCockpitDef(aircraftDef.specs.id) : undefined;
+    if (
+      type !== WeaponType.ROCKET &&
+      hardpoint &&
+      convergenceM !== undefined &&
+      cockpitDef
+    ) {
+      directionLocal = solveGunConvergenceLocal(
+        hardpointLocal,
+        cockpitDef,
+        convergenceM
+      ).directionLocal;
+    }
+    const direction = directionLocal.applyQuaternion(rotation).normalize();
     velocity.addScaledVector(direction, spec.muzzleVelocity);
   }
 
@@ -105,13 +120,12 @@ export class ProjectileSystem {
     pilot: Pilot,
     type: WeaponType,
     projectiles: Projectile[],
-    onProjectileSpawn?: (type: WeaponType) => void
+    onProjectileSpawn?: (type: WeaponType) => void,
+    random: () => number = Math.random
   ) {
     const rot = new THREE.Quaternion().setFromEuler(
       new THREE.Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
     );
-
-    const dir = LOCAL_FORWARD.clone().applyQuaternion(rot).normalize();
 
     const spec = WEAPON_SPECS_MAP[type];
 
@@ -124,15 +138,19 @@ export class ProjectileSystem {
     });
 
     const spread = new THREE.Vector3(
-      (Math.random() - 0.5) * dispersionAmount,
-      (Math.random() - 0.5) * dispersionAmount,
-      (Math.random() - 0.5) * dispersionAmount
+      (random() - 0.5) * dispersionAmount,
+      (random() - 0.5) * dispersionAmount,
+      (random() - 0.5) * dispersionAmount
     ).applyQuaternion(rot);
-
-    dir.add(spread).normalize();
 
     const release = getProjectileReleaseState(pilot, type);
     if (type !== WeaponType.BOMB) {
+      const dir = release.velocity
+        .clone()
+        .sub(new Vector3(pilot.vx, pilot.vy, pilot.vz))
+        .normalize()
+        .add(spread)
+        .normalize();
       release.velocity.set(pilot.vx, pilot.vy, pilot.vz)
         .addScaledVector(dir, spec.muzzleVelocity);
     }

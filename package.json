@@ -12,7 +12,10 @@
     "lint:fix": "eslint src --fix",
     "telemetry:report": "node tools/telemetry-report.mjs",
     "bake-maps": "tsx tools/bake-maps.ts",
-    "test": "node --import tsx/esm src/game/voxelMesh.test.ts"
+    "bake-cockpit": "tsx tools/bake-cockpit-components.ts",
+    "test": "npm run test:voxel && npm run test:convergence",
+    "test:voxel": "node --import tsx/esm src/game/voxelMesh.test.ts",
+    "test:convergence": "node --import tsx/esm src/game/projectileConvergence.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
