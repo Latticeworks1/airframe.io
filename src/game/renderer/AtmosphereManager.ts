@@ -4,7 +4,15 @@
  */
 
 import * as THREE from "three";
-import { createSkyDome, getSkyEnvironment, updateSkyDome, SkyEnvironment, SkyDomeMesh } from "../skyDome";
+import {
+  AtmosphericFog,
+  createAtmosphericFog,
+  createSkyDome,
+  getSkyEnvironment,
+  updateSkyDome,
+  SkyEnvironment,
+  SkyDomeMesh
+} from "../skyDome";
 import { MapDefinition } from "../content/maps/mapTypes";
 
 export class AtmosphereManager {
@@ -15,6 +23,7 @@ export class AtmosphereManager {
   public sunLight: THREE.DirectionalLight | null = null;
   public skyLight: THREE.HemisphereLight | null = null;
   public skyEnvironment: SkyEnvironment | null = null;
+  public atmosphericFog: AtmosphericFog | null = null;
   private lightningDelay = 0;
   private lightningPhase = 0;
 
@@ -61,6 +70,10 @@ export class AtmosphereManager {
 
     this.skyDome = createSkyDome(this.mapDef.atmosphere);
     this.scene.add(this.skyDome);
+
+    this.atmosphericFog = createAtmosphericFog(this.mapDef.atmosphere);
+    (this.scene as THREE.Scene & { fogNode: unknown }).fogNode =
+      this.atmosphericFog.node;
   }
 
   public update(
@@ -87,8 +100,9 @@ export class AtmosphereManager {
         this.skyDome,
         camera,
         fog,
+        this.atmosphericFog,
         dt,
-        1.0,
+        1.25,
         this.mapDef.world.radius * 0.84
       );
     }
@@ -164,5 +178,8 @@ export class AtmosphereManager {
       this.skyLight.dispose();
       this.skyLight = null;
     }
+
+    (this.scene as THREE.Scene & { fogNode: unknown }).fogNode = null;
+    this.atmosphericFog = null;
   }
 }
