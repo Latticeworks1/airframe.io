@@ -418,6 +418,20 @@ async function startServer() {
           });
         }
 
+        else if (data.type === "rtc_offer" || data.type === "rtc_answer" || data.type === "rtc_ice") {
+          if (!currentRoomId || !currentPilotId) return;
+          const room = rooms.get(currentRoomId);
+          if (!room) return;
+          const targetSocket = room.sockets.get(data.targetId);
+          if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+            targetSocket.send(JSON.stringify({ ...data, fromId: currentPilotId }));
+          }
+        }
+
+        else if (data.type === "pong") {
+          // keepalive acknowledgement — no action needed
+        }
+
         else if (data.type === "chat") {
           if (!currentRoomId) return;
           const room = rooms.get(currentRoomId);
@@ -498,6 +512,13 @@ async function startServer() {
     });
   });
 
+  // Keep all WebSocket connections alive through HF's reverse proxy idle timeout
+  setInterval(() => {
+    wss.clients.forEach(ws => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
+    });
+  }, 25_000);
+
   let peakConcurrent = 0;
 
   // Tracks clients on the main menu (not yet in a game room)
@@ -559,6 +580,24 @@ async function startServer() {
     const sid = req.query.sid as string | undefined;
     if (sid && sid.length < 128) lobbyPings.set(sid, Date.now());
     res.json({ ok: true });
+  });
+
+  app.get("/api/ice-servers", async (_req, res) => {
+    const domain = process.env.METERED_DOMAIN;
+    const key = process.env.METERED_SECRET_KEY;
+    if (!domain || !key) {
+      res.json([{ urls: "stun:stun.l.google.com:19302" }]);
+      return;
+    }
+    try {
+      const meteredUrl = `https://${domain}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(key)}`;
+      const r = await fetch(meteredUrl);
+      if (!r.ok) throw new Error(`Metered returned ${r.status}`);
+      res.json(await r.json());
+    } catch (e) {
+      console.warn("[ice-servers] Metered fetch failed, using STUN fallback:", e);
+      res.json([{ urls: "stun:stun.l.google.com:19302" }]);
+    }
   });
 
   app.get("/api/health", (req, res) => {
