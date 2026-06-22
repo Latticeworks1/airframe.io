@@ -73,9 +73,13 @@ export class ParticleEffectsManager {
     const smokeMat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
-      opacity: 0.45
+      opacity: 0.45,
+      vertexColors: true
     });
     this.smokeInstMesh = new THREE.InstancedMesh(geo, smokeMat, this.MAX_SMOKE);
+    const smokeColors = new Float32Array(this.MAX_SMOKE * 3);
+    smokeColors.fill(1);
+    this.smokeInstMesh.instanceColor = new THREE.InstancedBufferAttribute(smokeColors, 3);
     this.smokeInstMesh.count = 0;
     this.scene.add(this.smokeInstMesh);
 
@@ -83,9 +87,13 @@ export class ParticleEffectsManager {
     const expMat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
-      opacity: 0.8
+      opacity: 0.8,
+      vertexColors: true
     });
     this.explosionInstMesh = new THREE.InstancedMesh(geo.clone(), expMat, this.MAX_EXPLOSION);
+    const expColors = new Float32Array(this.MAX_EXPLOSION * 3);
+    expColors.fill(1);
+    this.explosionInstMesh.instanceColor = new THREE.InstancedBufferAttribute(expColors, 3);
     this.explosionInstMesh.count = 0;
     this.scene.add(this.explosionInstMesh);
   }
@@ -233,15 +241,21 @@ export class ParticleEffectsManager {
   public syncProjectiles(projectiles: Projectile[], playerPilotId: string, camera: THREE.Camera, dt: number) {
     if (!this.bulletInstMesh) {
       const geo = new THREE.BoxGeometry(0.264, 0.264, 16.8);
-      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true });
       this.bulletInstMesh = new THREE.InstancedMesh(geo, mat, 2000);
+      const bulletColors = new Float32Array(2000 * 3);
+      bulletColors.fill(1);
+      this.bulletInstMesh.instanceColor = new THREE.InstancedBufferAttribute(bulletColors, 3);
       this.bulletInstMesh.frustumCulled = false;
       this.scene.add(this.bulletInstMesh);
     }
     if (!this.rocketInstMesh) {
       const geo = new THREE.BoxGeometry(0.66, 0.66, 42);
-      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true });
       this.rocketInstMesh = new THREE.InstancedMesh(geo, mat, 200);
+      const rocketColors = new Float32Array(200 * 3);
+      rocketColors.fill(1);
+      this.rocketInstMesh.instanceColor = new THREE.InstancedBufferAttribute(rocketColors, 3);
       this.rocketInstMesh.frustumCulled = false;
       this.scene.add(this.rocketInstMesh);
     }
