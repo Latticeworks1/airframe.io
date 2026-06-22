@@ -93,11 +93,15 @@ export class WorldRenderer {
     const wasFirstPerson = this.cameraMode === "first-person";
     const willBeFirstPerson = mode === "first-person";
     this.cameraMode = mode;
-    this.freeLookYaw = 0;
-    this.freeLookPitch = 0;
     this.reticleTurbulenceX = 0;
     this.reticleTurbulenceY = 0;
     this.cameraModeTransitionPending = true;
+
+    // Preserve free-look direction, clamping to the limits of the new mode
+    if (willBeFirstPerson) {
+      this.freeLookYaw = THREE.MathUtils.clamp(this.freeLookYaw, -Math.PI * 0.72, Math.PI * 0.72);
+    }
+    this.freeLookPitch = THREE.MathUtils.clamp(this.freeLookPitch, -Math.PI / 2.2, Math.PI / 2.2);
 
     if (wasFirstPerson !== willBeFirstPerson && playerPilotId) {
       const voxState = this.voxelStateMap.get(playerPilotId);
@@ -600,10 +604,9 @@ export class WorldRenderer {
         : THREE.MathUtils.clamp(65 + speedKmph / 28, 62, 92);
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 3);
     
-    // Smoothly transition camera near plane to prevent clipping-plane pops
-    const targetNear =
+    // Snap camera near plane instantly to avoid weird slicing/sweeping effects through cockpit geometry
+    this.camera.near =
       this.cameraMode === "third-person" ? 1 : this.cameraMode === "first-person" ? 0.04 : 0.25;
-    this.camera.near += (targetNear - this.camera.near) * Math.min(1, dt * 15);
 
     // Smoothly transition cockpit light intensity to avoid lighting snaps
     const targetLightIntensity = this.cameraMode === "first-person" ? 4.5 : 0;
