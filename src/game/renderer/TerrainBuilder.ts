@@ -10,6 +10,61 @@ import { getTerrainLayout, loadHeightmap, sampleHeightmapAt } from "../terrainMo
 import { renderMapGeometry, renderPaletteFallback } from "../mapGeometryRenderer";
 import { ScatterRenderer } from "../scatterRenderer";
 
+function createWaterNormalMap(): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const imgData = ctx.createImageData(size, size);
+  const data = imgData.data;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const nx = (x / size) * Math.PI * 2;
+      const ny = (y / size) * Math.PI * 2;
+
+      let dx = 0;
+      let dy = 0;
+
+      // Overlapping sine waves for high-quality ocean surface normals
+      dx += Math.cos(nx * 4 + ny * 2) * 4;
+      dy += Math.cos(nx * 4 + ny * 2) * 2;
+
+      dx += Math.cos(nx * 8 - ny * 4) * 8;
+      dy += Math.cos(nx * 8 - ny * 4) * -4;
+
+      dx += Math.cos(nx * 16 + ny * 8) * 16;
+      dy += Math.cos(nx * 16 + ny * 8) * 8;
+
+      const strength = 0.035;
+      const vx = -dx * strength;
+      const vy = -dy * strength;
+      const vz = 1.0;
+
+      const len = Math.sqrt(vx * vx + vy * vy + vz * vz);
+      const nx_norm = vx / len;
+      const ny_norm = vy / len;
+      const nz_norm = vz / len;
+
+      const idx = (y * size + x) * 4;
+      data[idx]     = Math.floor((nx_norm * 0.5 + 0.5) * 255);
+      data[idx + 1] = Math.floor((ny_norm * 0.5 + 0.5) * 255);
+      data[idx + 2] = Math.floor((nz_norm * 0.5 + 0.5) * 255);
+      data[idx + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  return texture;
+}
+
 export class TerrainBuilder {
   private scene: THREE.Scene;
   private mapDef: MapDefinition;
@@ -21,6 +76,7 @@ export class TerrainBuilder {
   public pendingTiles = new Set<string>();
   public islands: THREE.Mesh[] = [];
   public carriers: THREE.Group[] = [];
+  public waterNormalMap: THREE.CanvasTexture | null = null;
 
   constructor(scene: THREE.Scene, mapDef: MapDefinition) {
     this.scene = scene;
@@ -56,8 +112,15 @@ export class TerrainBuilder {
 
     // Water surface
     {
-      const waterMat = new THREE.MeshBasicMaterial({
+      this.waterNormalMap = createWaterNormalMap();
+      this.waterNormalMap.repeat.set(800, 800);
+
+      const waterMat = new THREE.MeshStandardMaterial({
         color: waterColor,
+        roughness: 0.15,
+        metalness: 0.1,
+        normalMap: this.waterNormalMap,
+        normalScale: new THREE.Vector2(0.15, 0.15),
         polygonOffset: true,
         polygonOffsetFactor: -2, // Pushed further away than landMat (which is -1) to prevent z-fighting at steep camera angles
         polygonOffsetUnits: -2
@@ -95,7 +158,7 @@ export class TerrainBuilder {
     }
 
     if (def.kind === "heightmap") {
-      const segs = window.devicePixelRatio >= 2 ? 256 : 512;
+      const segs = 512; // Unconditionally use 512 for a smoother shoreline
       const planeGeo = new THREE.PlaneGeometry(world.radius * 2, world.radius * 2, segs, segs);
       planeGeo.rotateX(-Math.PI / 2);
       this.heightmapGeo = planeGeo;
@@ -110,7 +173,7 @@ export class TerrainBuilder {
         for (let i = 0; i < pos.count; i++) {
           const x = pos.getX(i), z = pos.getZ(i);
           const h = sampleHeightmapAt(hd, x, z);
-          pos.setY(i, h < wh ? Math.min(h, wh - 15.0) : h);
+          pos.setY(i, h < wh ? Math.min(h, wh - 6.0) : h); // Snapping to wh - 6.0 instead of wh - 15.0 for a less aggressive cliff
         }
         pos.needsUpdate = true;
         planeGeo.computeVertexNormals();
@@ -249,6 +312,14 @@ export class TerrainBuilder {
     }
   }
 
+  public updateWater(dt: number) {
+    if (this.waterNormalMap) {
+      // Slow drift of the normal map offset to animate waves
+      this.waterNormalMap.offset.x += 0.008 * dt;
+      this.waterNormalMap.offset.y += 0.005 * dt;
+    }
+  }
+
   public loadMapTiles() {
     if (!this.groundMaterial) return;
 
@@ -299,6 +370,10 @@ export class TerrainBuilder {
     if (this.scatterRenderer) {
       this.scatterRenderer.dispose();
       this.scatterRenderer = null;
+    }
+    if (this.waterNormalMap) {
+      this.waterNormalMap.dispose();
+      this.waterNormalMap = null;
     }
     for (const obj of this.loadedTiles.values()) {
       this.scene.remove(obj);
