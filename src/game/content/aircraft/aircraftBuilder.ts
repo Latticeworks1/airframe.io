@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { AircraftRenderDef } from "./types";
 import { BlockPrimitiveDef } from "../primitives/primitiveTypes";
+import { AIRCRAFT_DEFINITIONS } from "./registry";
 
 export function createAircraftMesh(def: AircraftRenderDef): THREE.Group {
   const group = new THREE.Group();
@@ -108,4 +109,28 @@ function createWedgeGeometry(width: number, height: number, depth: number) {
   geo.computeVertexNormals();
 
   return geo;
+}
+
+export function generateProceduralAircraft(
+  id: string,
+  colorHex: string,
+  secHex: string,
+  accentHex: string
+): THREE.Group {
+  const def = AIRCRAFT_DEFINITIONS.find(a => a.specs.id === id);
+  if (!def) {
+    return new THREE.Group();
+  }
+
+  const renderDef = {
+    ...def.render,
+    materials: {
+      ...def.render.materials,
+      primary: colorHex || def.render.materials.primary,
+      secondary: secHex || def.render.materials.secondary,
+      accent: accentHex || def.render.materials.accent
+    }
+  };
+
+  return createAircraftMesh(renderDef);
 }
