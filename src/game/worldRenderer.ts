@@ -70,6 +70,7 @@ export class WorldRenderer {
   private screenEffects: ScreenEffectsPass | null = null;
   private rendererReady = false;
   private lastPlayerDamageTotal: number | null = null;
+  private _cameraMode: CameraMode = "third-person";
 
   constructor(container: HTMLDivElement, mapDef: MapDefinition, onReady: () => void) {
     this.container = container;
@@ -78,18 +79,21 @@ export class WorldRenderer {
   }
 
   public get cameraMode(): CameraMode {
-    return this.cameraManager.cameraMode;
+    return this.cameraManager ? this.cameraManager.cameraMode : this._cameraMode;
   }
 
   public get bombSightInfo() {
-    return this.cameraManager.bombSightInfo;
+    return this.cameraManager ? this.cameraManager.bombSightInfo : null;
   }
 
   public setCameraMode(mode: CameraMode, playerPilotId?: string) {
-    const wasFirstPerson = this.cameraManager.cameraMode === "first-person";
+    const wasFirstPerson = this.cameraMode === "first-person";
     const willBeFirstPerson = mode === "first-person";
     
-    this.cameraManager.setCameraMode(mode);
+    this._cameraMode = mode;
+    if (this.cameraManager) {
+      this.cameraManager.setCameraMode(mode);
+    }
 
     if (wasFirstPerson !== willBeFirstPerson && playerPilotId) {
       const voxState = this.voxelStateMap.get(playerPilotId);
@@ -190,6 +194,7 @@ export class WorldRenderer {
 
     // Sub-renderer setups
     this.cameraManager = new CameraManager(this.camera, this.cockpitLight, this.mapDef);
+    this.cameraManager.setCameraMode(this._cameraMode);
     this.groundTargetRenderer = new GroundTargetRenderer(this.scene, (x, y, z, mult) =>
       this.triggerExplosion(x, y, z, mult)
     );
