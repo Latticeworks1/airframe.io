@@ -45,8 +45,8 @@ export class TerrainBuilder {
     const landMat = new THREE.MeshLambertMaterial({
       flatShading: true,
       polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
     });
     this.groundMaterial = landMat;
 

@@ -276,7 +276,7 @@ export class ScatterRenderer {
         if (wy <= mapDef.world.waterHeight + 1) continue; // skip underwater
 
         const scale = 0.7 + rand() * 0.7;
-        dummy.position.set(wx, wy, wz);
+        dummy.position.set(wx, wy - 1.0, wz);
         dummy.rotation.y = rand() * Math.PI * 2;
         dummy.scale.setScalar(scale);
         dummy.updateMatrix();
@@ -334,7 +334,7 @@ export class ScatterRenderer {
           const w = 8  + rand() * 24;
           const h = 6  + rand() * 34;
           const d = 8  + rand() * 20;
-          dummy.position.set(wx, wy + h * 0.5, wz);
+          dummy.position.set(wx, wy + h * 0.5 - 0.5, wz);
           dummy.rotation.y = rand() * Math.PI * 0.5;
           dummy.scale.set(w, h, d);
           dummy.updateMatrix();
