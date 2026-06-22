@@ -195,6 +195,11 @@ export class WorldRenderer {
     // Particles manager setup
     this.particlesManager = new ParticleEffectsManager(this.scene);
 
+    // Initialize cockpit light in the scene permanently with intensity 0 to avoid shader recompilations on POV toggle
+    this.cockpitLight = new THREE.PointLight(0xb8d4ff, 0, 4, 1.5);
+    this.cockpitLight.castShadow = false;
+    this.scene.add(this.cockpitLight);
+
     window.addEventListener("resize", this.handleResize);
     this.rendererReady = true;
   }
@@ -225,6 +230,12 @@ export class WorldRenderer {
       this.scene.remove(this.cloudField.mesh);
       this.cloudField.dispose();
       this.cloudField = null;
+    }
+
+    if (this.cockpitLight) {
+      this.scene.remove(this.cockpitLight);
+      this.cockpitLight.dispose();
+      this.cockpitLight = null;
     }
 
     if (this.renderer?.domElement) {
@@ -606,7 +617,7 @@ export class WorldRenderer {
     }
 
     if (this.cameraMode === "bombsight") {
-      if (this.cockpitLight?.parent) this.scene.remove(this.cockpitLight);
+      if (this.cockpitLight) this.cockpitLight.intensity = 0;
       const ckEntry3 = this.cockpitStateMap.get(playerPilotId);
       if (ckEntry3) ckEntry3.group.visible = false;
       pGroup.visible = false;
@@ -628,11 +639,7 @@ export class WorldRenderer {
       pGroup.visible = true;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, true);
 
-      if (!this.cockpitLight) {
-        this.cockpitLight = new THREE.PointLight(0xb8d4ff, 4.5, 4, 1.5);
-        this.cockpitLight.castShadow = false;
-      }
-      if (!this.cockpitLight.parent) this.scene.add(this.cockpitLight);
+      if (this.cockpitLight) this.cockpitLight.intensity = 4.5;
 
       const ckEntry = this.cockpitStateMap.get(playerPilotId);
       const localCockpitEye = ckEntry?.eyeLocal.clone()
@@ -679,7 +686,7 @@ export class WorldRenderer {
       this.camera.up.copy(rotatedUp);
       this.camera.lookAt(lookTarget);
     } else {
-      if (this.cockpitLight?.parent) this.scene.remove(this.cockpitLight);
+      if (this.cockpitLight) this.cockpitLight.intensity = 0;
       const ckEntry2 = this.cockpitStateMap.get(playerPilotId);
       if (ckEntry2) ckEntry2.group.visible = false;
       pGroup.visible = true;

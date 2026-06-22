@@ -30,6 +30,7 @@ export interface HardpointSpecs {
   positions: { x: number; y: number; z: number }[];
   rocketPositions?: { x: number; y: number; z: number }[];
   bombPositions?: { x: number; y: number; z: number }[];
+  gunConvergenceM?: number;
 }
 
 export interface DamageZoneSpecs {

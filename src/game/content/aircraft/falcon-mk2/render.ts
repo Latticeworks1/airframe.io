@@ -10,7 +10,7 @@ export const render: AircraftRenderDef = {
     metal: "#475569"
   },
   camera: {
-    cockpitEye: [0, 1.46, 0.95],
+    cockpitEye: [0, 1.50, 0.90],
     firstPersonFov: 74,
     hiddenBlockIds: ["canopy"]
   },
