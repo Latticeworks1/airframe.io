@@ -55,7 +55,9 @@ export default function App() {
     connectMultiplayer,
     disconnectMultiplayer,
     sendChat,
-    socketRef
+    socketRef,
+    dataChansRef,
+    myPilotIdRef,
   } = useMultiplayer();
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -490,50 +492,55 @@ export default function App() {
       }
       playerWasDead = playerIsDead;
 
-      if (
-        isMultiplayer &&
-        socketRef.current &&
-        socketRef.current.readyState === WebSocket.OPEN &&
-        now - lastSendTime > 16
-      ) {
+      if (isMultiplayer && now - lastSendTime > 16) {
         lastSendTime = now;
         if (localPlayer) {
           const r1 = (v: number) => Math.round(v * 10) / 10;
           const r3 = (v: number) => Math.round(v * 1000) / 1000;
           const r2d = (v: number) => Math.round(v * 100) / 100;
           const dm = localPlayer.damage;
-          socketRef.current.send(
-            JSON.stringify({
-              type: "update",
-              pilotState: {
-                x: r1(localPlayer.x),
-                y: r1(localPlayer.y),
-                z: r1(localPlayer.z),
-                vx: r2d(localPlayer.vx),
-                vy: r2d(localPlayer.vy),
-                vz: r2d(localPlayer.vz),
-                pitch: r3(localPlayer.pitch),
-                yaw: r3(localPlayer.yaw),
-                roll: r3(localPlayer.roll),
-                throttle: r2d(localPlayer.throttle),
-                damage: {
-                  engine: r2d(dm.engine),
-                  leftWing: r2d(dm.leftWing),
-                  rightWing: r2d(dm.rightWing),
-                  tail: r2d(dm.tail),
-                  cockpit: r2d(dm.cockpit),
-                  fuelTank: r2d(dm.fuelTank),
-                  fuselage: r2d(dm.fuselage),
-                  hasFire: dm.hasFire,
-                  hasOilLeak: dm.hasOilLeak
-                },
-                ammo: localPlayer.ammo,
-                score: localPlayer.score,
-                kills: localPlayer.kills,
-                deaths: localPlayer.deaths
-              }
-            })
-          );
+          const pilotState = {
+            x: r1(localPlayer.x),
+            y: r1(localPlayer.y),
+            z: r1(localPlayer.z),
+            vx: r2d(localPlayer.vx),
+            vy: r2d(localPlayer.vy),
+            vz: r2d(localPlayer.vz),
+            pitch: r3(localPlayer.pitch),
+            yaw: r3(localPlayer.yaw),
+            roll: r3(localPlayer.roll),
+            throttle: r2d(localPlayer.throttle),
+            damage: {
+              engine: r2d(dm.engine),
+              leftWing: r2d(dm.leftWing),
+              rightWing: r2d(dm.rightWing),
+              tail: r2d(dm.tail),
+              cockpit: r2d(dm.cockpit),
+              fuelTank: r2d(dm.fuelTank),
+              fuselage: r2d(dm.fuselage),
+              hasFire: dm.hasFire,
+              hasOilLeak: dm.hasOilLeak
+            },
+            ammo: localPlayer.ammo,
+            score: localPlayer.score,
+            kills: localPlayer.kills,
+            deaths: localPlayer.deaths
+          };
+
+          // Send to server for state bookkeeping (new joiner welcome snapshots)
+          if (socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(JSON.stringify({ type: "update", pilotState }));
+          }
+
+          // Also broadcast directly to peers via DataChannels (bypasses HF proxy)
+          const dcPayload = JSON.stringify({
+            type: "player_updated",
+            id: myPilotIdRef.current,
+            state: pilotState
+          });
+          dataChansRef.current.forEach(dc => {
+            if (dc.readyState === "open") dc.send(dcPayload);
+          });
         }
 
         if (engine.isHost) {
@@ -567,20 +574,28 @@ export default function App() {
               };
             });
 
-          socketRef.current.send(
-            JSON.stringify({
-              type: "bots_sync",
-              bots: syncBots
-            })
-          );
+          const botsPayload = JSON.stringify({ type: "bots_updated", bots: syncBots });
+          const scorePayload = JSON.stringify({
+            type: "scores_updated",
+            team1Score: engine.team1Score,
+            team2Score: engine.team2Score
+          });
 
-          socketRef.current.send(
-            JSON.stringify({
+          if (socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(JSON.stringify({ type: "bots_sync", bots: syncBots }));
+            socketRef.current.send(JSON.stringify({
               type: "score_sync",
               team1Score: engine.team1Score,
               team2Score: engine.team2Score
-            })
-          );
+            }));
+          }
+
+          dataChansRef.current.forEach(dc => {
+            if (dc.readyState === "open") {
+              dc.send(botsPayload);
+              dc.send(scorePayload);
+            }
+          });
         }
       }
 
