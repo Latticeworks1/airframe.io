@@ -21,6 +21,7 @@ import { AIRCRAFT_DEFINITIONS } from "./content/aircraft/registry";
 import { createAircraftMesh } from "./content/aircraft/aircraftBuilder";
 import { CloudField } from "./cloudField";
 import { getProjectileReleaseState } from "./projectileSystem";
+import { getSightRayLocal } from "./weaponConvergence";
 import { MapDefinition } from "./content/maps/mapTypes";
 import { WEAPON_SPECS_MAP } from "./content/weapons/weaponData";
 import { ScreenEffectsPass } from "./screenEffects";
@@ -74,6 +75,8 @@ export class WorldRenderer {
   private freeLookPitch = 0;
   private cameraModeTransitionPending = true;
   private cameraShakeTime = 0;
+  private reticleTurbulenceX = 0;
+  private reticleTurbulenceY = 0;
   private screenEffects: ScreenEffectsPass | null = null;
   private rendererReady = false;
   private lastPlayerDamageTotal: number | null = null;
@@ -92,15 +95,17 @@ export class WorldRenderer {
     this.cameraMode = mode;
     this.freeLookYaw = 0;
     this.freeLookPitch = 0;
+    this.reticleTurbulenceX = 0;
+    this.reticleTurbulenceY = 0;
     this.cameraModeTransitionPending = true;
 
     if (wasFirstPerson !== willBeFirstPerson && playerPilotId) {
       const voxState = this.voxelStateMap.get(playerPilotId);
       const hasCanvas = this.cockpitStateMap.has(playerPilotId);
       if (voxState) {
+        if (voxState.spinMesh) voxState.spinMesh.visible = !willBeFirstPerson;
         if (hasCanvas) {
           voxState.mesh.visible = true;
-          if (voxState.spinMesh) voxState.spinMesh.visible = true;
           setCockpitVisible(voxState, !willBeFirstPerson);
         } else {
           setFPVMaterial(voxState, willBeFirstPerson);
@@ -135,7 +140,7 @@ export class WorldRenderer {
       skyEnvironment.fogFar
     );
 
-    this.camera = new THREE.PerspectiveCamera(65, width / height, 1, 65000);
+    this.camera = new THREE.PerspectiveCamera(65, width / height, 1, skyEnvironment.fogFar);
     this.camera.position.set(0, 200, 300);
 
     const hasWebGPU = typeof navigator !== "undefined" && !!(navigator as any).gpu;
@@ -143,35 +148,29 @@ export class WorldRenderer {
       this.renderer = new WebGPURenderer({
         antialias: true,
         powerPreference: "high-performance",
-        forceWebGL: !hasWebGPU
+        forceWebGL: !hasWebGPU,
+        reversedDepthBuffer: true
       });
       await this.renderer.init();
+      if (!this.renderer.reversedDepthBuffer) {
+        throw new Error("Reverse-Z depth buffering is required but unavailable.");
+      }
       this.renderer.shadowMap.enabled = true;
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     } catch (err) {
-      console.warn("WebGPURenderer WebGPU backend failed to init, trying WebGL fallback...", err);
-      try {
-        this.renderer = new WebGPURenderer({
-          antialias: true,
-          powerPreference: "high-performance",
-          forceWebGL: true
-        });
-        await this.renderer.init();
-        this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      } catch (err2) {
-        console.error("All rendering backends failed:", err2);
-        const errDiv = document.createElement("div");
-        errDiv.style.color = "#ef4444";
-        errDiv.style.padding = "20px";
-        errDiv.style.textAlign = "center";
-        errDiv.style.background = "#1e293b";
-        errDiv.style.borderRadius = "8px";
-        errDiv.style.margin = "20px";
-        errDiv.innerText = "Fatal: WebGPU/WebGL 2 not supported by your browser or graphics driver.";
-        this.container.appendChild(errDiv);
-        throw err2;
-      }
+      this.renderer?.dispose();
+      console.error("Required reverse-Z renderer initialization failed:", err);
+      const errDiv = document.createElement("div");
+      errDiv.style.color = "#ef4444";
+      errDiv.style.padding = "20px";
+      errDiv.style.textAlign = "center";
+      errDiv.style.background = "#1e293b";
+      errDiv.style.borderRadius = "8px";
+      errDiv.style.margin = "20px";
+      errDiv.innerText =
+        "Fatal: this browser or graphics driver does not support the required reverse-Z depth buffer.";
+      this.container.appendChild(errDiv);
+      throw err;
     }
 
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
@@ -365,7 +364,7 @@ export class WorldRenderer {
           const inFPV = this.cameraMode === "first-person";
           const hasCanvasCockpit = this.cockpitStateMap.has(p.id);
           voxState.mesh.visible = true;
-          if (voxState.spinMesh) voxState.spinMesh.visible = true;
+          if (voxState.spinMesh) voxState.spinMesh.visible = !inFPV;
           if (inFPV && hasCanvasCockpit) {
             setCockpitVisible(voxState, false);
           } else {
@@ -523,7 +522,7 @@ export class WorldRenderer {
     }
 
     this.syncLeadHud();
-    this.syncCenterReticle(playerPilotId);
+    this.syncCenterReticle(playerPilotId, playerPilot?.aircraftId);
 
     const playerDamageTotal = playerPilot
       ? playerPilot.damage.engine +
@@ -629,19 +628,27 @@ export class WorldRenderer {
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, true);
 
       if (!this.cockpitLight) {
-        this.cockpitLight = new THREE.PointLight(0x70ffb0, 0.35, 4);
+        this.cockpitLight = new THREE.PointLight(0xb8d4ff, 4.5, 4, 1.5);
         this.cockpitLight.castShadow = false;
       }
       if (!this.cockpitLight.parent) this.scene.add(this.cockpitLight);
 
-      const localCockpitEye = new THREE.Vector3(...(cameraDef?.cockpitEye ?? [0, 1.15, 1.6]));
-      const cockpitPosition = localCockpitEye.applyQuaternion(pGroup.quaternion).add(pGroup.position);
+      const ckEntry = this.cockpitStateMap.get(playerPilotId);
+      const localCockpitEye = ckEntry?.eyeLocal.clone()
+        ?? new THREE.Vector3(...(cameraDef?.cockpitEye ?? [0, 1.15, 1.6]));
+      const cockpitPosition = localCockpitEye
+        .clone()
+        .applyQuaternion(pGroup.quaternion)
+        .add(pGroup.position);
 
       this.camera.position.copy(cockpitPosition);
-      const panelOffset = new THREE.Vector3(0, 0.85, 1.5).applyQuaternion(pGroup.quaternion);
-      this.cockpitLight.position.copy(pGroup.position).add(panelOffset);
+      const lightPosition = localCockpitEye
+        .clone()
+        .add(new THREE.Vector3(0, 0.12, 0.16))
+        .applyQuaternion(pGroup.quaternion)
+        .add(pGroup.position);
+      this.cockpitLight.position.copy(lightPosition);
 
-      const ckEntry = this.cockpitStateMap.get(playerPilotId);
       if (ckEntry) {
         ckEntry.group.visible = true;
         const speed = Math.sqrt(playerPilot.vx ** 2 + playerPilot.vy ** 2 + playerPilot.vz ** 2);
@@ -649,7 +656,13 @@ export class WorldRenderer {
         const altNorm = Math.min(playerPilot.y / 14000, 1.0);
         const euler = new THREE.Euler().setFromQuaternion(pGroup.quaternion, "YXZ");
         const headingNorm = (((euler.y / (Math.PI * 2)) % 1) + 1) % 1;
-        ckEntry.updateLive(speedNorm, altNorm, headingNorm, playerPilot.throttle);
+        ckEntry.updateLive(
+          speedNorm, altNorm, headingNorm, playerPilot.throttle, euler.x, euler.z,
+          playerPilot.gearDeployed,
+          playerPilot.flaps !== "up",
+          playerPilot.airbrakeDeployed,
+          playerPilot.damage.engine < 0.5
+        );
       }
 
       const localRigidRot = pGroup.quaternion.clone();
@@ -678,9 +691,26 @@ export class WorldRenderer {
       );
       const rotatedOffset = defaultOffset.clone().applyQuaternion(freeLookRot);
 
-      const noRollEuler = new THREE.Euler().setFromQuaternion(pGroup.quaternion, "YXZ");
-      noRollEuler.z = 0;
-      const rollFreeQuat = new THREE.Quaternion().setFromEuler(noRollEuler);
+      // Stable roll-free quaternion construction using vector math to avoid gimbal lock.
+      // We align the local Z-axis (forward) with the aircraft's forward direction,
+      // and force the local X-axis (right/wings) to be horizontal/perpendicular to world up.
+      const forwardVec = new THREE.Vector3(0, 0, 1).applyQuaternion(pGroup.quaternion).normalize();
+      const rightVec = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forwardVec).normalize();
+      
+      // Handle the vertical climb/dive singularity
+      if (rightVec.lengthSq() < 1e-4) {
+        // Fallback: project aircraft's local right onto the horizontal plane
+        rightVec.copy(new THREE.Vector3(1, 0, 0).applyQuaternion(pGroup.quaternion));
+        rightVec.y = 0;
+        rightVec.normalize();
+        if (rightVec.lengthSq() < 1e-4) {
+          rightVec.set(1, 0, 0); // Absolute fallback
+        }
+      }
+      
+      const upVec = new THREE.Vector3().crossVectors(forwardVec, rightVec).normalize();
+      const rollFreeMatrix = new THREE.Matrix4().makeBasis(rightVec, upVec, forwardVec);
+      const rollFreeQuat = new THREE.Quaternion().setFromRotationMatrix(rollFreeMatrix);
 
       const worldOffset = rotatedOffset.clone().applyQuaternion(rollFreeQuat);
 
@@ -714,12 +744,25 @@ export class WorldRenderer {
 
     this.cameraShakeTime += dt;
     const shakeKmph = new THREE.Vector3(playerPilot.vx, playerPilot.vy, playerPilot.vz).length() * 3.6;
-    const shakeMultiplier = this.cameraMode === "first-person" ? 0.20 : 1.0;
-    const shakeStrength = THREE.MathUtils.clamp((shakeKmph - 500) / 250, 0, 1) * 0.1 * shakeMultiplier;
-    if (shakeStrength > 0 && pGroup) {
-      const t = this.cameraShakeTime;
-      const dx = Math.sin(t * 18.7) * Math.sin(t * 6.3) * shakeStrength;
-      const dy = Math.sin(t * 24.1 + 0.9) * Math.sin(t * 4.9) * shakeStrength;
+    const speedBuffet = THREE.MathUtils.clamp((shakeKmph - 500) / 250, 0, 1);
+    const stallBuffet = THREE.MathUtils.clamp(playerPilot.stallSeverity ?? 0, 0, 1);
+    const t = this.cameraShakeTime;
+    const shakeX = Math.sin(t * 18.7) * Math.sin(t * 6.3);
+    const shakeY = Math.sin(t * 24.1 + 0.9) * Math.sin(t * 4.9);
+
+    if (this.cameraMode === "first-person") {
+      // The pilot, camera, and cockpit are one rigid aircraft-relative frame.
+      // Turbulence therefore disturbs the outside reference/reflector sight,
+      // not the nearby tub and panel geometry around the pilot.
+      const sightBuffet = Math.min(1.5, speedBuffet * 0.65 + stallBuffet);
+      this.reticleTurbulenceX = shakeX * sightBuffet * 1.15;
+      this.reticleTurbulenceY = shakeY * sightBuffet * 0.90;
+    } else {
+      this.reticleTurbulenceX = 0;
+      this.reticleTurbulenceY = 0;
+      const shakeStrength = speedBuffet * 0.1;
+      const dx = shakeX * shakeStrength;
+      const dy = shakeY * shakeStrength;
       const shakeLocal = new THREE.Vector3(dx, dy, 0).applyQuaternion(pGroup.quaternion);
       this.camera.position.add(shakeLocal);
     }
@@ -963,7 +1006,7 @@ export class WorldRenderer {
     if (dot) dot.style.backgroundColor = ind.isBot ? "#94a3b8" : "#ef4444";
   }
 
-  private syncCenterReticle(playerPilotId: string) {
+  private syncCenterReticle(playerPilotId: string, aircraftId?: string) {
     const centerReticle = document.getElementById("center-reticle");
     if (!centerReticle) return;
 
@@ -973,13 +1016,37 @@ export class WorldRenderer {
       return;
     }
 
-    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(pGroup.quaternion).normalize();
-    const noseWorldPos = pGroup.position.clone().addScaledVector(forward, 250);
-    const projected = noseWorldPos.project(this.camera);
+    const cockpit = this.cockpitStateMap.get(playerPilotId);
+    let reticleWorldPos: THREE.Vector3;
+    if (this.cameraMode === "first-person" && cockpit) {
+      reticleWorldPos = cockpit.sightAnchorLocal
+        .clone()
+        .applyQuaternion(pGroup.quaternion)
+        .add(pGroup.position);
+    } else {
+      const ckDef = aircraftId ? getCockpitDef(aircraftId) : undefined;
+      const acDef = aircraftId
+        ? AIRCRAFT_DEFINITIONS.find(d => d.specs.id === aircraftId)
+        : undefined;
+      const convergenceM = acDef?.hardpoints.gunConvergenceM;
+      if (ckDef && convergenceM !== undefined) {
+        const targetLocal = new THREE.Vector3(...ckDef.eye)
+          .addScaledVector(getSightRayLocal(ckDef), convergenceM);
+        reticleWorldPos = targetLocal
+          .applyQuaternion(pGroup.quaternion)
+          .add(pGroup.position);
+      } else {
+        const forward = new THREE.Vector3(0, 0, 1)
+          .applyQuaternion(pGroup.quaternion)
+          .normalize();
+        reticleWorldPos = pGroup.position.clone().addScaledVector(forward, 250);
+      }
+    }
+    const projected = reticleWorldPos.project(this.camera);
 
     if (projected.z <= 1.0) {
-      const x = (projected.x * 0.5 + 0.5) * 100;
-      const y = (-projected.y * 0.5 + 0.5) * 100;
+      const x = (projected.x * 0.5 + 0.5) * 100 + this.reticleTurbulenceX;
+      const y = (-projected.y * 0.5 + 0.5) * 100 + this.reticleTurbulenceY;
       const cx = Math.max(-5, Math.min(105, x));
       const cy = Math.max(-5, Math.min(105, y));
       centerReticle.style.opacity = "0.9";
