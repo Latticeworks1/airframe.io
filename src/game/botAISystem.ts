@@ -5,18 +5,20 @@
 
 import { Vector3 } from "three";
 import { Pilot, GroundTarget, SkyZone } from "../types";
+import { physical, locomotive, destructible, control } from "../types/components";
 import { getForwardVector } from "./math";
 
 function pRepairTick(bot: Pilot, dt: number) {
-  bot.damage.engine = Math.min(1.0, bot.damage.engine + dt * 0.25);
-  bot.damage.leftWing = Math.min(1.0, bot.damage.leftWing + dt * 0.25);
-  bot.damage.rightWing = Math.min(1.0, bot.damage.rightWing + dt * 0.25);
-  bot.damage.tail = Math.min(1.0, bot.damage.tail + dt * 0.2);
-  bot.damage.cockpit = Math.min(1.0, bot.damage.cockpit + dt * 0.15);
-  bot.damage.fuelTank = Math.min(1.0, bot.damage.fuelTank + dt * 0.2);
-  bot.damage.fuselage = Math.min(1.0, bot.damage.fuselage + dt * 0.1);
-  bot.damage.hasFire = false;
-  bot.damage.hasOilLeak = false;
+  const dm = destructible(bot.entity).damageModel!;
+  dm.engine = Math.min(1.0, dm.engine + dt * 0.25);
+  dm.leftWing = Math.min(1.0, dm.leftWing + dt * 0.25);
+  dm.rightWing = Math.min(1.0, dm.rightWing + dt * 0.25);
+  dm.tail = Math.min(1.0, dm.tail + dt * 0.2);
+  dm.cockpit = Math.min(1.0, dm.cockpit + dt * 0.15);
+  dm.fuelTank = Math.min(1.0, dm.fuelTank + dt * 0.2);
+  dm.fuselage = Math.min(1.0, dm.fuselage + dt * 0.1);
+  dm.hasFire = false;
+  dm.hasOilLeak = false;
 }
 
 export class BotAISystem {
@@ -29,39 +31,42 @@ export class BotAISystem {
     handleWeaponFiring: (pilot: Pilot, triggerPrimary: boolean, triggerSecondary: boolean, dt: number) => void,
     mapRadius: number = 6000
   ) {
-    if (!bot.aiState) return;
+    const botPhys = physical(bot.entity);
+    const botLoco = locomotive(bot.entity);
+    const botCtrl = control(bot.entity);
+    const botDm = destructible(bot.entity).damageModel!;
+    const botAi = botCtrl.aiState;
+    if (!botAi) return;
 
-    bot.aiState.timer -= dt;
+    botAi.timer -= dt;
 
-    const botPos = new Vector3(bot.x, bot.y, bot.z);
+    const botPos = new Vector3(botPhys.x, botPhys.y, botPhys.z);
 
     // Map Boundary turn-back logic for bots
-    const distFromCenter = Math.sqrt(bot.x * bot.x + bot.z * bot.z);
+    const distFromCenter = Math.sqrt(botPhys.x * botPhys.x + botPhys.z * botPhys.z);
     if (distFromCenter > mapRadius * 0.78) {
-      bot.aiState.behavior = "patrol";
-      bot.aiState.destinationX = -bot.x * 0.2; // Head back inside
-      bot.aiState.destinationY = 550;
-      bot.aiState.destinationZ = -bot.z * 0.2;
-      bot.throttle = 1.0; // Max speed to return to battle
+      botAi.behavior = "patrol";
+      botAi.destinationX = -botPhys.x * 0.2;
+      botAi.destinationY = 550;
+      botAi.destinationZ = -botPhys.z * 0.2;
+      botLoco.throttle = 1.0;
       return;
     }
     const opponentTeam = bot.team === 1 ? 2 : 1;
     const enemies = pilots.filter(
-      p => p.team === opponentTeam && p.damage.fuselage > 0
+      p => p.team === opponentTeam && destructible(p.entity).damageModel!.fuselage > 0
     );
 
-    if (bot.aiState.timer <= 0) {
-      bot.aiState.timer = 1.5 + Math.random() * 2.0;
+    if (botAi.timer <= 0) {
+      botAi.timer = 1.5 + Math.random() * 2.0;
 
-      const health =
-        (bot.damage.leftWing + bot.damage.rightWing + bot.damage.engine) / 3;
+      const health = (botDm.leftWing + botDm.rightWing + botDm.engine) / 3;
 
-      if (health < 0.45 && bot.aiState.behavior !== "rtb") {
-        bot.aiState.behavior = "rtb";
-        // RTB toward own carrier side rather than map center
-        bot.aiState.destinationX = bot.team === 1 ? -14000 : 14000;
-        bot.aiState.destinationY = 600;
-        bot.aiState.destinationZ = bot.team === 1 ? -8000 : 8000;
+      if (health < 0.45 && botAi.behavior !== "rtb") {
+        botAi.behavior = "rtb";
+        botAi.destinationX = bot.team === 1 ? -14000 : 14000;
+        botAi.destinationY = 600;
+        botAi.destinationZ = bot.team === 1 ? -8000 : 8000;
         return;
       }
 
@@ -72,10 +77,10 @@ export class BotAISystem {
 
         if (enemyGrounds.length > 0 && Math.random() < 0.7) {
           const tgt = enemyGrounds[Math.floor(Math.random() * enemyGrounds.length)];
-          bot.aiState.behavior = "bombing";
-          bot.aiState.destinationX = tgt.x;
-          bot.aiState.destinationY = tgt.y + 120;
-          bot.aiState.destinationZ = tgt.z;
+          botAi.behavior = "bombing";
+          botAi.destinationX = tgt.x;
+          botAi.destinationY = tgt.y + 120;
+          botAi.destinationZ = tgt.z;
           return;
         }
       }
@@ -94,58 +99,56 @@ export class BotAISystem {
         });
 
         if (closest && minDist < 14000) {
-          bot.aiState.behavior = "dogfight";
-          bot.aiState.targetId = closest.id;
+          botAi.behavior = "dogfight";
+          botAi.targetId = closest.id;
         } else {
-          bot.aiState.behavior = "patrol";
-          bot.aiState.targetId = null;
+          botAi.behavior = "patrol";
+          botAi.targetId = null;
         }
       } else {
-        bot.aiState.behavior = "patrol";
+        botAi.behavior = "patrol";
       }
     }
 
-    if (bot.aiState.behavior === "dogfight" && bot.aiState.targetId) {
-      const target = pilots.find(p => p.id === bot.aiState!.targetId);
+    if (botAi.behavior === "dogfight" && botAi.targetId) {
+      const target = pilots.find(p => p.id === botAi!.targetId);
 
-      if (target && target.damage.fuselage > 0) {
-        const tPos = new Vector3(target.x, target.y, target.z);
-        const tVel = new Vector3(target.vx, target.vy, target.vz);
+      if (target && destructible(target.entity).damageModel!.fuselage > 0) {
+        const tPhys = physical(target.entity);
+        const tPos = new Vector3(tPhys.x, tPhys.y, tPhys.z);
+        const tVel = new Vector3(tPhys.vx, tPhys.vy, tPhys.vz);
         const dist = botPos.distanceTo(tPos);
         const localForward = getForwardVector(bot);
 
-        // Check if the target is behind the bot (being pursued) — trigger evasion break.
         const toTarget = tPos.clone().sub(botPos).normalize();
         const targetOnTail = toTarget.dot(localForward) < -0.5 && dist < 800;
 
         if (targetOnTail) {
-          // Break turn: juke perpendicular + climb to escape the firing cone.
           const t = Date.now() / 1000;
           const juke = Math.sin(t * 3.7) * 600;
-          bot.aiState.destinationX = bot.x + localForward.z * juke;
-          bot.aiState.destinationY = Math.max(250, bot.y + 400);
-          bot.aiState.destinationZ = bot.z - localForward.x * juke;
-          bot.throttle = Math.min(1.0, bot.throttle + dt * 0.8);
+          botAi.destinationX = botPhys.x + localForward.z * juke;
+          botAi.destinationY = Math.max(250, botPhys.y + 400);
+          botAi.destinationZ = botPhys.z - localForward.x * juke;
+          botLoco.throttle = Math.min(1.0, botLoco.throttle + dt * 0.8);
         } else {
           const bulletSpeed = 820;
           const timeToTgt = dist / bulletSpeed;
           const leadTargetPos = tPos.clone().addScaledVector(tVel, timeToTgt);
 
-          // Terrain floor — bots must not dive into the ground chasing.
           const safeLeadY = Math.max(leadTargetPos.y, 180);
-          bot.aiState.destinationX = leadTargetPos.x;
-          bot.aiState.destinationY = bot.y < 150 ? Math.max(safeLeadY, bot.y + 200) : safeLeadY;
-          bot.aiState.destinationZ = leadTargetPos.z;
+          botAi.destinationX = leadTargetPos.x;
+          botAi.destinationY = botPhys.y < 150 ? Math.max(safeLeadY, botPhys.y + 200) : safeLeadY;
+          botAi.destinationZ = leadTargetPos.z;
 
           const bearingAngle = leadTargetPos.clone().sub(botPos).normalize();
           const aimDot = bearingAngle.dot(localForward);
 
           if (dist > 1200) {
-            bot.throttle = Math.min(1.0, bot.throttle + dt * 0.5);
+            botLoco.throttle = Math.min(1.0, botLoco.throttle + dt * 0.5);
           } else if (aimDot < 0.85) {
-            bot.throttle = Math.max(0.65, bot.throttle - dt * 0.3);
+            botLoco.throttle = Math.max(0.65, botLoco.throttle - dt * 0.3);
           } else {
-            bot.throttle = Math.min(1.0, bot.throttle + dt * 0.4);
+            botLoco.throttle = Math.min(1.0, botLoco.throttle + dt * 0.4);
           }
 
           if (aimDot > 0.93 && dist < 1200) {
@@ -153,37 +156,35 @@ export class BotAISystem {
           }
         }
       } else {
-        bot.aiState.behavior = "patrol";
+        botAi.behavior = "patrol";
       }
 
       return;
     }
 
-    if (bot.aiState.behavior === "patrol") {
-      // Each bot gets a unique patrol bearing derived from its id hash so they
-      // spread across the neutral zone rather than converging on one point.
+    if (botAi.behavior === "patrol") {
       const seed = bot.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
       const angle = (seed % 8) * (Math.PI / 4);
       const patrolR = 4000 + (seed % 3) * 2000;
       const t = Date.now() / 8000;
-      bot.aiState.destinationX = Math.cos(angle + t) * patrolR;
-      bot.aiState.destinationY = 400 + (seed % 5) * 80;
-      bot.aiState.destinationZ = Math.sin(angle + t) * patrolR;
-      bot.throttle = 0.75;
+      botAi.destinationX = Math.cos(angle + t) * patrolR;
+      botAi.destinationY = 400 + (seed % 5) * 80;
+      botAi.destinationZ = Math.sin(angle + t) * patrolR;
+      botLoco.throttle = 0.75;
 
       return;
     }
 
-    if (bot.aiState.behavior === "bombing") {
-      if (bot.y < 110) {
-        bot.aiState.destinationY = 350;
-        bot.throttle = 1.0;
+    if (botAi.behavior === "bombing") {
+      if (botPhys.y < 110) {
+        botAi.destinationY = 350;
+        botLoco.throttle = 1.0;
       }
 
       const dest = new Vector3(
-        bot.aiState.destinationX,
-        bot.aiState.destinationY,
-        bot.aiState.destinationZ
+        botAi.destinationX,
+        botAi.destinationY,
+        botAi.destinationZ
       );
 
       const d = botPos.distanceTo(dest);
@@ -195,24 +196,24 @@ export class BotAISystem {
       return;
     }
 
-    if (bot.aiState.behavior === "rtb") {
+    if (botAi.behavior === "rtb") {
       const dest = new Vector3(
-        bot.aiState.destinationX,
-        bot.aiState.destinationY,
-        bot.aiState.destinationZ
+        botAi.destinationX,
+        botAi.destinationY,
+        botAi.destinationZ
       );
 
       const d = botPos.distanceTo(dest);
 
       if (d < 50) {
-        bot.vx = 0;
-        bot.vy = 0;
-        bot.vz = 0;
+        botPhys.vx = 0;
+        botPhys.vy = 0;
+        botPhys.vz = 0;
 
         pRepairTick(bot, dt);
 
-        if (bot.damage.engine > 0.95 && bot.damage.leftWing > 0.95) {
-          bot.aiState.behavior = "patrol";
+        if (botDm.engine > 0.95 && botDm.leftWing > 0.95) {
+          botAi.behavior = "patrol";
         }
       }
     }

@@ -5,6 +5,7 @@
 
 import * as THREE from "three";
 import { Pilot, WeaponType, CameraMode } from "../../types";
+import { physical, locomotive, destructible, visual } from "../../types/components";
 import {
   buildVoxelMesh,
   deformAtImpact,
@@ -81,10 +82,16 @@ export class AircraftRenderer {
     for (const p of pilots) {
       activePilotIds.add(p.id);
 
+      // Extract components once per pilot per frame
+      const pPhys = physical(p.entity);
+      const pLoco = locomotive(p.entity);
+      const pVis = visual(p.entity);
+      const pDm = destructible(p.entity).damageModel!;
+
       let group = this.groupMap.get(p.id);
 
       if (!group) {
-        const voxDef = getVoxelDef(p.specs.id);
+        const voxDef = getVoxelDef(pVis.assetId);
         if (voxDef) {
           group = new THREE.Group();
           const state = buildVoxelMesh(voxDef);
@@ -92,7 +99,7 @@ export class AircraftRenderer {
           if (state.spinMesh) group.add(state.spinMesh);
           this.voxelStateMap.set(p.id, state);
 
-          const ckDef = getCockpitDef(p.specs.id);
+          const ckDef = getCockpitDef(pVis.assetId);
           if (ckDef) {
             const ckState = buildCockpitMesh(ckDef);
             group.add(ckState.group);
@@ -100,22 +107,22 @@ export class AircraftRenderer {
           }
         } else {
           group = generateProceduralAircraft(
-            p.specs.id,
-            p.specs.color,
-            p.specs.secondaryColor,
-            p.specs.accentColor
+            pVis.assetId,
+            pVis.color,
+            pVis.secondaryColor ?? "",
+            pVis.accentColor ?? ""
           );
         }
         this.scene.add(group);
         this.groupMap.set(p.id, group);
       }
 
-      group.position.set(p.x, p.y, p.z);
-      group.quaternion.setFromEuler(new THREE.Euler(p.pitch, p.yaw, p.roll, "YXZ"));
+      group.position.set(pPhys.x, pPhys.y, pPhys.z);
+      group.quaternion.setFromEuler(new THREE.Euler(pPhys.pitch, pPhys.yaw, pPhys.roll, "YXZ"));
 
       const voxState = this.voxelStateMap.get(p.id);
       if (voxState) {
-        animateSpinCells(voxState, dt, p.throttle);
+        animateSpinCells(voxState, dt, pLoco.throttle);
         if (p.id === playerPilotId) {
           const inFPV = cameraMode === "first-person";
           const hasCanvasCockpit = this.cockpitStateMap.has(p.id);
@@ -132,7 +139,7 @@ export class AircraftRenderer {
       if (!voxState) {
         group.traverse((child) => {
           if (child.userData.tags && child.userData.tags.includes("spinZ")) {
-            child.rotation.z += (15 + p.throttle * 40) * dt;
+            child.rotation.z += (15 + pLoco.throttle * 40) * dt;
           }
 
           const bombTag = (child.userData.tags as string[] | undefined)?.find((tag) =>
@@ -145,8 +152,8 @@ export class AircraftRenderer {
           }
 
           const component = child.userData.damageComponent as any;
-          if (component && (p.damage as any)[component] !== undefined) {
-            const value = (p.damage as any)[component];
+          if (component && (pDm as any)[component] !== undefined) {
+            const value = (pDm as any)[component];
             if (typeof value === "number") {
               child.visible = value > 0.05;
               if (child.userData.initialScaleY === undefined) {
@@ -158,26 +165,26 @@ export class AircraftRenderer {
         });
       }
 
-      const wingDmg = (p.damage.leftWing + p.damage.rightWing) / 2;
+      const wingDmg = (pDm.leftWing + pDm.rightWing) / 2;
 
-      if (p.damage.hasFire) {
+      if (pDm.hasFire) {
         if (Math.random() < 0.4) {
-          this.createSmokeTail(p.x, p.y, p.z, 0xd97706, 1.2);
+          this.createSmokeTail(pPhys.x, pPhys.y, pPhys.z, 0xd97706, 1.2);
           this.createSmokeTail(
-            p.x - p.vx * 0.05,
-            p.y - p.vy * 0.05,
-            p.z - p.vz * 0.05,
+            pPhys.x - pPhys.vx * 0.05,
+            pPhys.y - pPhys.vy * 0.05,
+            pPhys.z - pPhys.vz * 0.05,
             0x1f2937,
             1.6
           );
         }
-      } else if (p.damage.engine < 0.7) {
+      } else if (pDm.engine < 0.7) {
         if (Math.random() < 0.25) {
-          this.createSmokeTail(p.x, p.y, p.z, 0x475569, 0.9);
+          this.createSmokeTail(pPhys.x, pPhys.y, pPhys.z, 0x475569, 0.9);
         }
       } else if (wingDmg < 0.75) {
         if (Math.random() < 0.15) {
-          this.createSmokeTail(p.x, p.y, p.z, 0xf1f5f9, 0.6);
+          this.createSmokeTail(pPhys.x, pPhys.y, pPhys.z, 0xf1f5f9, 0.6);
         }
       }
     }

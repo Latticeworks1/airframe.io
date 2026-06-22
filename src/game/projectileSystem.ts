@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { Vector3 } from "three";
 import { Pilot, Projectile, GroundTarget, WeaponType, AmmoBelt } from "../types";
+import { physical, destructible } from "../types/components";
 import { WEAPON_SPECS_MAP } from "./aircraftData";
 import { AIRCRAFT_DEFINITIONS } from "./content/aircraft/registry";
 import { MODIFICATIONS } from "./content/modifications/modificationData";
@@ -221,10 +222,13 @@ export class ProjectileSystem {
 
         if (target.id === p.ownerId) continue;
         if (target.team === p.ownerTeam) continue;
-        if (target.damage.fuselage <= 0) continue;
+        const tPhys = physical(target.entity);
+        const tDestr = destructible(target.entity);
+        const tDm = tDestr.damageModel!;
+        if (tDm.fuselage <= 0) continue;
         if ((epTarget.invulnerableTimer ?? 0) > 0) continue;
 
-        ProjectileSystem.targetPosTmp.set(target.x, target.y, target.z);
+        ProjectileSystem.targetPosTmp.set(tPhys.x, tPhys.y, tPhys.z);
         closestPointOnSegment(
           ProjectileSystem.lastPosTmp,
           ProjectileSystem.currentPosTmp,
@@ -236,7 +240,7 @@ export class ProjectileSystem {
 
         if (distToPlaneCenter < hitRadius) {
           ProjectileSystem.rotInvTmp
-            .setFromEuler(ProjectileSystem.eulerTmp.set(target.pitch, target.yaw, target.roll, "YXZ"))
+            .setFromEuler(ProjectileSystem.eulerTmp.set(tPhys.pitch, tPhys.yaw, tPhys.roll, "YXZ"))
             .invert();
 
           // Transform projectile segment endpoints into local aircraft space
@@ -315,7 +319,7 @@ export class ProjectileSystem {
             callbacks.onHitEnemy(p.ownerId, target.id, false);
           }
 
-          if (target.damage.fuselage <= 0) {
+          if (tDm.fuselage <= 0) {
             callbacks.registerKill(p.ownerId, target.id, String(p.type));
           }
 
@@ -326,9 +330,11 @@ export class ProjectileSystem {
       // Ground target check
       if (!hasHit) {
         for (const target of groundTargets) {
-          if (target.isDead || target.team === p.ownerTeam) continue;
+          const gtDestr = destructible(target.entity);
+          if (gtDestr.isDead || target.team === p.ownerTeam) continue;
 
-          ProjectileSystem.targetPosTmp.set(target.x, target.y, target.z);
+          const gtPhys = physical(target.entity);
+          ProjectileSystem.targetPosTmp.set(gtPhys.x, gtPhys.y, gtPhys.z);
           closestPointOnSegment(
             ProjectileSystem.lastPosTmp,
             ProjectileSystem.currentPosTmp,
@@ -352,19 +358,17 @@ export class ProjectileSystem {
             if (belt === "Armor-Piercing") dmg *= 1.8;
             if (p.type === WeaponType.BOMB) dmg *= 2.5;
 
-            target.hp = Math.max(0, target.hp - dmg);
-            if (target.hp <= 0) {
-              target.isDead = true;
-            }
+            gtDestr.hp = Math.max(0, gtDestr.hp - dmg);
+            if (gtDestr.hp <= 0) gtDestr.isDead = true;
             if (callbacks.onGroundTargetDamage) {
-              callbacks.onGroundTargetDamage(target.id, target.hp, target.isDead);
+              callbacks.onGroundTargetDamage(target.id, gtDestr.hp, gtDestr.isDead);
             }
             if (callbacks.onHitEnemy) {
               callbacks.onHitEnemy(p.ownerId, target.id, true);
             }
             hasHit = true;
 
-            if (target.isDead) {
+            if (gtDestr.isDead) {
               callbacks.registerGroundTargetKill(p.ownerId, target);
             }
 

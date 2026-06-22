@@ -4,6 +4,7 @@
  */
 import * as THREE from "three";
 import { Pilot, AircraftSpecs } from "../types";
+import { physical, locomotive, destructible } from "../types/components";
 import { LOCAL_FORWARD, LOCAL_UP, LOCAL_RIGHT, airDensityAtAltitude, safeNormalize } from "./math";
 export type AeroControls = {
   pitchInput: number;    // -1 nose down, +1 nose up
@@ -250,14 +251,13 @@ function forcePerpendicularToAirflow(
   return safeNormalize(n, preferredWorldNormal);
 }
 function applyDamageToSurface(surface: AeroSurface, pilot: Pilot) {
+  const dm = destructible(pilot.entity).damageModel!;
   let health = 1.0;
-  if (surface.name === "leftAileron") health *= pilot.damage.leftWing;
-  if (surface.name === "rightAileron") health *= pilot.damage.rightWing;
-  if (surface.name === "leftWing") health *= pilot.damage.leftWing;
-  if (surface.name === "rightWing") health *= pilot.damage.rightWing;
-  if (surface.name === "hStab" || surface.name === "vStab") {
-    health *= pilot.damage.tail;
-  }
+  if (surface.name === "leftAileron") health *= dm.leftWing;
+  if (surface.name === "rightAileron") health *= dm.rightWing;
+  if (surface.name === "leftWing") health *= dm.leftWing;
+  if (surface.name === "rightWing") health *= dm.rightWing;
+  if (surface.name === "hStab" || surface.name === "vStab") health *= dm.tail;
   return THREE.MathUtils.clamp(health, 0, 1);
 }
 export function computeAeroSurfaceForces(args: {
@@ -269,15 +269,17 @@ export function computeAeroSurfaceForces(args: {
   altitudeAGL?: number;
 }): AeroState {
   const { pilot, specs, controls } = args;
+  const phys = physical(pilot.entity);
+  const loco = locomotive(pilot.entity);
   const qBodyToWorld = getAircraftQuaternion(pilot);
   const qWorldToBody = qBodyToWorld.clone().invert();
-  const velocityWorld = new THREE.Vector3(pilot.vx, pilot.vy, pilot.vz);
+  const velocityWorld = new THREE.Vector3(phys.vx, phys.vy, phys.vz);
   const localVelocity = velocityWorld.clone().applyQuaternion(qWorldToBody);
   const speed = velocityWorld.length();
-  const rho = airDensityAtAltitude(pilot.y);
+  const rho = airDensityAtAltitude(phys.y);
   const dynamicPressure = 0.5 * rho * speed * speed;
-  const mach = getMach(speed, pilot.y);
-  
+  const mach = getMach(speed, phys.y);
+
   // Physically correct AoA and Sideslip coordinates (no abs/max clamping)
   const aoaDeg = THREE.MathUtils.radToDeg(
     Math.atan2(-localVelocity.y, localVelocity.z)
@@ -291,7 +293,7 @@ export function computeAeroSurfaceForces(args: {
   const wingSpanApprox = Math.sqrt(specs.aspectRatio * specs.wingArea);
   
   // Ground effect based on user's altitude above ground level (AGL)
-  const altAGL = args.altitudeAGL !== undefined ? args.altitudeAGL : Math.max(0, pilot.y);
+  const altAGL = args.altitudeAGL !== undefined ? args.altitudeAGL : Math.max(0, phys.y);
   const groundEffect = getGroundEffectMultiplier(altAGL, wingSpanApprox);
   
   const totalForceWorld = new THREE.Vector3();
@@ -332,11 +334,11 @@ export function computeAeroSurfaceForces(args: {
     let flapLiftBonus = 0;
     let flapCLMaxBonus = 0;
     let flapDragPenalty = 0;
-    if (pilot.flaps === "combat") {
+    if (loco.flaps === "combat") {
       flapLiftBonus = 0.15;
       flapCLMaxBonus = 0.18;
       flapDragPenalty = 0.015;
-    } else if (pilot.flaps === "landing") {
+    } else if (loco.flaps === "landing") {
       flapLiftBonus = 0.32;
       flapCLMaxBonus = 0.42;
       flapDragPenalty = 0.045;
@@ -424,7 +426,7 @@ export function computeAeroSurfaceForces(args: {
   }
 
   // Global central Landing Gear drag force belonging to the fuselage
-  if (pilot.gearDeployed) {
+  if (loco.gearDeployed) {
     const gearArea = specs.wingArea * 0.08;
     const gearCd = 0.45;
     const gearForceMag = dynamicPressure * gearArea * gearCd;
@@ -434,8 +436,8 @@ export function computeAeroSurfaceForces(args: {
   }
 
   // Flap pitching torque (nose-down / negative torque around local X Pitch axis)
-  if (pilot.flaps && pilot.flaps !== "up") {
-    const flapCm = pilot.flaps === "combat" ? -0.06 : -0.14;
+  if (loco.flaps && loco.flaps !== "up") {
+    const flapCm = loco.flaps === "combat" ? -0.06 : -0.14;
     const span = Math.sqrt(specs.aspectRatio * specs.wingArea);
     const chord = specs.wingArea / Math.max(1, span);
     const flapTorqueX = flapCm * dynamicPressure * specs.wingArea * chord;

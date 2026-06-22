@@ -7,7 +7,7 @@ import { useState, useRef, useCallback } from "react";
 import { Vector3, Quaternion, Euler } from "three";
 import { GameEngine } from "../game/gameEngine";
 import { WorldRenderer } from "../game/worldRenderer";
-import { AmmoBelt, MatchMode } from "../types";
+import { AmmoBelt, MatchMode, Pilot } from "../types";
 import { DEFAULT_AIRCRAFT } from "../game/aircraftData";
 import { getMultiplayerSessionId } from "./useProgression";
 import { FlightPhysicsEngine } from "../game/flightModel";
@@ -109,7 +109,7 @@ export function useMultiplayer() {
 
             msg.players.forEach((player: any) => {
               if (player.id !== myPilotId && !engine.pilots.some(p => p.id === player.id)) {
-                engine.pilots.push({
+                engine.pilots.push(new Pilot({
                   id: player.id,
                   name: player.name,
                   isBot: false,
@@ -135,7 +135,7 @@ export function useMultiplayer() {
                   kills: player.kills || 0,
                   deaths: player.deaths || 0,
                   xpEarned: 0
-                });
+                }));
               }
             });
 
@@ -173,7 +173,7 @@ export function useMultiplayer() {
             const player = msg.player;
             if (player.id !== myPilotId && !engine.pilots.some(p => p.id === player.id)) {
               if (engine.isHost) engine.removeBot(player.team);
-              engine.pilots.push({
+              engine.pilots.push(new Pilot({
                 id: player.id,
                 name: player.name,
                 isBot: false,
@@ -199,7 +199,7 @@ export function useMultiplayer() {
                 kills: player.kills || 0,
                 deaths: player.deaths || 0,
                 xpEarned: 0
-              });
+              }));
             }
           } else if (msg.type === "player_updated") {
             const remote = engine.pilots.find(p => p.id === msg.id);

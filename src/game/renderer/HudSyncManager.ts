@@ -1,8 +1,6 @@
 import * as THREE from "three";
 import { LeadIndicatorInfo, Pilot, WeaponType } from "../../types";
-import { getCockpitDef } from "../content/aircraft/cockpitRegistry";
 import { AIRCRAFT_DEFINITIONS } from "../content/aircraft/registry";
-import { getSightRayLocal } from "../weaponConvergence";
 import { WEAPON_SPECS_MAP } from "../content/weapons/weaponData";
 
 export class HudSyncManager {
@@ -158,23 +156,14 @@ export class HudSyncManager {
         .applyQuaternion(pGroup.quaternion)
         .add(pGroup.position);
     } else {
-      const ckDef = aircraftId ? getCockpitDef(aircraftId) : undefined;
       const acDef = aircraftId
         ? AIRCRAFT_DEFINITIONS.find(d => d.specs.id === aircraftId)
         : undefined;
-      const convergenceM = acDef?.hardpoints.gunConvergenceM;
-      if (ckDef && convergenceM !== undefined) {
-        const targetLocal = new THREE.Vector3(...ckDef.eye)
-          .addScaledVector(getSightRayLocal(ckDef), convergenceM);
-        reticleWorldPos = targetLocal
-          .applyQuaternion(pGroup.quaternion)
-          .add(pGroup.position);
-      } else {
-        const forward = new THREE.Vector3(0, 0, 1)
-          .applyQuaternion(pGroup.quaternion)
-          .normalize();
-        reticleWorldPos = pGroup.position.clone().addScaledVector(forward, 250);
-      }
+      const convergenceM = acDef?.hardpoints.gunConvergenceM ?? 250;
+      const forward = new THREE.Vector3(0, 0, 1)
+        .applyQuaternion(pGroup.quaternion)
+        .normalize();
+      reticleWorldPos = pGroup.position.clone().addScaledVector(forward, convergenceM);
     }
     const projected = reticleWorldPos.project(this.camera);
 
