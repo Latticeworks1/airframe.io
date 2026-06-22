@@ -10,29 +10,12 @@ import {
   Projectile,
   GroundTarget,
   SkyZone,
-  LeadIndicatorInfo,
   InputFrame,
-  CameraMode,
-  WeaponType
+  CameraMode
 } from "../types";
 import { CloudField } from "./cloudField";
 import { MapDefinition } from "./content/maps/mapTypes";
-import { WEAPON_SPECS_MAP } from "./content/weapons/weaponData";
 import { ScreenEffectsPass } from "./screenEffects";
-import {
-  buildVoxelMesh,
-  deformAtImpact,
-  disposeVoxelMesh,
-  findVoxelImpact,
-  animateSpinCells,
-  setCockpitVisible,
-  setFPVMaterial,
-  resetVoxelMesh,
-  VoxelMeshState
-} from "./voxelMesh";
-import { getVoxelDef } from "./content/aircraft/voxelRegistry";
-import { buildCockpitMesh, type CockpitState } from "./cockpitMesh";
-import { getCockpitDef } from "./content/aircraft/cockpitRegistry";
 
 // Sub-renderers/Managers
 import { TerrainBuilder } from "./renderer/TerrainBuilder";
@@ -42,7 +25,7 @@ import { CameraManager } from "./renderer/CameraManager";
 import { GroundTargetRenderer } from "./renderer/GroundTargetRenderer";
 import { SkyZoneRenderer } from "./renderer/SkyZoneRenderer";
 import { HudSyncManager } from "./renderer/HudSyncManager";
-import { generateProceduralAircraft } from "./content/aircraft/aircraftBuilder";
+import { AircraftRenderer } from "./renderer/AircraftRenderer";
 
 export class WorldRenderer {
   public scene!: THREE.Scene;
@@ -60,13 +43,10 @@ export class WorldRenderer {
   public hudSyncManager!: HudSyncManager;
 
   private cockpitLight: THREE.PointLight | null = null;
-  private aircraftGroupMap = new Map<string, THREE.Group>();
-  private voxelStateMap = new Map<string, VoxelMeshState>();
-  private cockpitStateMap = new Map<string, CockpitState>();
+  public aircraftRenderer!: AircraftRenderer;
   private cloudField: CloudField | null = null;
 
   private mapDef!: MapDefinition;
-  public leadIndicator2D: LeadIndicatorInfo | null = null;
   private screenEffects: ScreenEffectsPass | null = null;
   private rendererReady = false;
   private lastPlayerDamageTotal: number | null = null;
@@ -96,17 +76,7 @@ export class WorldRenderer {
     }
 
     if (wasFirstPerson !== willBeFirstPerson && playerPilotId) {
-      const voxState = this.voxelStateMap.get(playerPilotId);
-      const hasCanvas = this.cockpitStateMap.has(playerPilotId);
-      if (voxState) {
-        if (voxState.spinMesh) voxState.spinMesh.visible = !willBeFirstPerson;
-        if (hasCanvas) {
-          voxState.mesh.visible = true;
-          setCockpitVisible(voxState, !willBeFirstPerson);
-        } else {
-          setFPVMaterial(voxState, willBeFirstPerson);
-        }
-      }
+      this.aircraftRenderer.updateFirstPersonState(playerPilotId, willBeFirstPerson);
     }
   }
 
@@ -200,6 +170,9 @@ export class WorldRenderer {
     );
     this.skyZoneRenderer = new SkyZoneRenderer(this.scene);
     this.hudSyncManager = new HudSyncManager(this.camera);
+    this.aircraftRenderer = new AircraftRenderer(this.scene, (x, y, z, colorHex, scale) =>
+      this.createSmokeTail(x, y, z, colorHex, scale)
+    );
 
     window.addEventListener("resize", this.handleResize);
     this.rendererReady = true;
@@ -225,6 +198,7 @@ export class WorldRenderer {
     this.particlesManager.dispose();
     this.groundTargetRenderer.dispose();
     this.skyZoneRenderer.dispose();
+    this.aircraftRenderer.dispose();
 
     this.screenEffects?.dispose();
     this.screenEffects = null;
@@ -249,13 +223,11 @@ export class WorldRenderer {
   }
 
   public deformAircraft(pilotId: string, localOffsetMeters: THREE.Vector3, blastMeters: number) {
-    const state = this.voxelStateMap.get(pilotId);
-    if (state) deformAtImpact(state, localOffsetMeters, blastMeters);
+    this.aircraftRenderer.deformAircraft(pilotId, localOffsetMeters, blastMeters);
   }
 
   public resetVoxelState(pilotId: string) {
-    const state = this.voxelStateMap.get(pilotId);
-    if (state) resetVoxelMesh(state);
+    this.aircraftRenderer.resetVoxelState(pilotId);
   }
 
   public findVoxelImpact(
@@ -263,9 +235,7 @@ export class WorldRenderer {
     segStartLocal: THREE.Vector3,
     segEndLocal: THREE.Vector3
   ): THREE.Vector3 | null | undefined {
-    const state = this.voxelStateMap.get(pilotId);
-    if (!state) return undefined;
-    return findVoxelImpact(state, segStartLocal, segEndLocal);
+    return this.aircraftRenderer.findVoxelImpact(pilotId, segStartLocal, segEndLocal);
   }
 
   public createSmokeTail(x: number, y: number, z: number, colorHex: number = 0x64748b, scale: number = 1.0) {
@@ -300,128 +270,7 @@ export class WorldRenderer {
     this.groundTargetRenderer.sync(groundTargets, dt);
     this.skyZoneRenderer.sync(skyZones);
 
-    const activePilotIds = new Set<string>();
-
-    for (const p of pilots) {
-      activePilotIds.add(p.id);
-
-      let group = this.aircraftGroupMap.get(p.id);
-
-      if (!group) {
-        const voxDef = getVoxelDef(p.specs.id);
-        if (voxDef) {
-          group = new THREE.Group();
-          const state = buildVoxelMesh(voxDef);
-          group.add(state.mesh);
-          if (state.spinMesh) group.add(state.spinMesh);
-          this.voxelStateMap.set(p.id, state);
-
-          const ckDef = getCockpitDef(p.specs.id);
-          if (ckDef) {
-            const ckState = buildCockpitMesh(ckDef);
-            group.add(ckState.group);
-            this.cockpitStateMap.set(p.id, ckState);
-          }
-        } else {
-          group = generateProceduralAircraft(
-            p.specs.id,
-            p.specs.color,
-            p.specs.secondaryColor,
-            p.specs.accentColor
-          );
-        }
-        this.scene.add(group);
-        this.aircraftGroupMap.set(p.id, group);
-      }
-
-      group.position.set(p.x, p.y, p.z);
-      group.quaternion.setFromEuler(new THREE.Euler(p.pitch, p.yaw, p.roll, "YXZ"));
-
-      const voxState = this.voxelStateMap.get(p.id);
-      if (voxState) {
-        animateSpinCells(voxState, dt, p.throttle);
-        if (p.id === playerPilotId) {
-          const inFPV = this.cameraManager.cameraMode === "first-person";
-          const hasCanvasCockpit = this.cockpitStateMap.has(p.id);
-          voxState.mesh.visible = true;
-          if (voxState.spinMesh) voxState.spinMesh.visible = !inFPV;
-          if (inFPV && hasCanvasCockpit) {
-            setCockpitVisible(voxState, false);
-          } else {
-            setCockpitVisible(voxState, !inFPV);
-          }
-        }
-      }
-
-      if (!voxState)
-        group.traverse((child) => {
-          if (child.userData.tags && child.userData.tags.includes("spinZ")) {
-            child.rotation.z += (15 + p.throttle * 40) * dt;
-          }
-
-          const bombTag = (child.userData.tags as string[] | undefined)?.find((tag) =>
-            tag.startsWith("ordnance:bomb:")
-          );
-          if (bombTag) {
-            const bombIndex = Number(bombTag.split(":")[2]);
-            const bombsRemaining = p.ammo[WeaponType.BOMB] ?? 0;
-            child.visible = Number.isFinite(bombIndex) && bombIndex < bombsRemaining;
-          }
-
-          const component = child.userData.damageComponent as any;
-          if (component && (p.damage as any)[component] !== undefined) {
-            const value = (p.damage as any)[component];
-            if (typeof value === "number") {
-              child.visible = value > 0.05;
-              if (child.userData.initialScaleY === undefined) {
-                child.userData.initialScaleY = child.scale.y;
-              }
-              child.scale.y = Math.max(0.15, value) * child.userData.initialScaleY;
-            }
-          }
-        });
-
-      const wingDmg = (p.damage.leftWing + p.damage.rightWing) / 2;
-
-      if (p.damage.hasFire) {
-        if (Math.random() < 0.4) {
-          this.createSmokeTail(p.x, p.y, p.z, 0xd97706, 1.2);
-          this.createSmokeTail(
-            p.x - p.vx * 0.05,
-            p.y - p.vy * 0.05,
-            p.z - p.vz * 0.05,
-            0x1f2937,
-            1.6
-          );
-        }
-      } else if (p.damage.engine < 0.7) {
-        if (Math.random() < 0.25) {
-          this.createSmokeTail(p.x, p.y, p.z, 0x475569, 0.9);
-        }
-      } else if (wingDmg < 0.75) {
-        if (Math.random() < 0.15) {
-          this.createSmokeTail(p.x, p.y, p.z, 0xf1f5f9, 0.6);
-        }
-      }
-    }
-
-    for (const cachedId of Array.from(this.aircraftGroupMap.keys())) {
-      if (!activePilotIds.has(cachedId)) {
-        const mesh = this.aircraftGroupMap.get(cachedId);
-        if (mesh) this.scene.remove(mesh);
-        this.aircraftGroupMap.delete(cachedId);
-        const voxState = this.voxelStateMap.get(cachedId);
-        if (voxState) {
-          disposeVoxelMesh(voxState);
-          this.voxelStateMap.delete(cachedId);
-        }
-        const ckEntry = this.cockpitStateMap.get(cachedId);
-        if (ckEntry) {
-          ckEntry.dispose();
-          this.cockpitStateMap.delete(cachedId);
-        }
-      }
-    }
+    this.aircraftRenderer.sync(pilots, playerPilotId, this.cameraManager.cameraMode, dt);
 
     this.particlesManager.syncProjectiles(projectiles, playerPilotId, this.camera, dt);
     this.particlesManager.updateParticles(dt);
@@ -430,8 +279,8 @@ export class WorldRenderer {
       playerPilotId,
       inputFrame,
       dt,
-      this.aircraftGroupMap,
-      this.cockpitStateMap
+      this.aircraftRenderer.groupMap,
+      this.aircraftRenderer.cockpitStateMap
     );
 
     const playerPilot = pilots.find((p) => p.id === playerPilotId);
@@ -439,85 +288,15 @@ export class WorldRenderer {
     this.cloudField?.update(dt);
     this.terrainBuilder.updateWater(dt);
 
-    let lockedAdv: Pilot | null = null;
-    let bestDot = 0.94;
-    let lockedDist = 0;
-
-    if (playerPilot) {
-      const oppTeam = playerPilot.team === 1 ? 2 : 1;
-      const adversaries = pilots.filter((p) => p.team === oppTeam && p.damage.fuselage > 0);
-      const pGroup = this.aircraftGroupMap.get(playerPilotId);
-
-      if (pGroup) {
-        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(pGroup.quaternion).normalize();
-
-        adversaries.forEach((p) => {
-          const dx = p.x - playerPilot.x;
-          const dy = p.y - playerPilot.y;
-          const dz = p.z - playerPilot.z;
-          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-          if (dist > 50 && dist < (playerPilot.specs.radarRange ?? 4500)) {
-            const dir = new THREE.Vector3(dx, dy, dz).normalize();
-            const dot = forward.dot(dir);
-            if (dot > bestDot) {
-              bestDot = dot;
-              lockedAdv = p;
-              lockedDist = dist;
-            }
-          }
-        });
-      }
-    }
-
-    if (lockedAdv && playerPilot) {
-      const adv = lockedAdv as Pilot;
-
-      const primaryWeapon = playerPilot.specs.weapons.find(
-        (w) => w !== WeaponType.ROCKET && w !== WeaponType.BOMB && (playerPilot.ammo[w] ?? 0) > 0
-      );
-      const muzzleVelocity = primaryWeapon ? WEAPON_SPECS_MAP[primaryWeapon].muzzleVelocity : 820;
-
-      const tdx = adv.x - playerPilot.x;
-      const tdy = adv.y - playerPilot.y;
-      const tdz = adv.z - playerPilot.z;
-      const toTarget = new THREE.Vector3(tdx, tdy, tdz).normalize();
-      const closingSpeed = toTarget.dot(new THREE.Vector3(playerPilot.vx, playerPilot.vy, playerPilot.vz));
-      const t = lockedDist / Math.max(1, muzzleVelocity + closingSpeed);
-
-      const futureX = adv.x + adv.vx * t;
-      const futureY = adv.y + adv.vy * t;
-      const futureZ = adv.z + adv.vz * t;
-
-      const pTarget = new THREE.Vector3(adv.x, adv.y, adv.z).project(this.camera);
-      const pLead = new THREE.Vector3(futureX, futureY, futureZ).project(this.camera);
-
-      if (pTarget.z <= 1.0 && pLead.z <= 1.0) {
-        this.leadIndicator2D = {
-          x: (pTarget.x * 0.5 + 0.5) * 100,
-          y: (-pTarget.y * 0.5 + 0.5) * 100,
-          sX: (pLead.x * 0.5 + 0.5) * 100,
-          sY: (-pLead.y * 0.5 + 0.5) * 100,
-          name: adv.name,
-          distance: Math.round(lockedDist),
-          isBot: adv.isBot ?? true
-        };
-      } else {
-        this.leadIndicator2D = null;
-      }
-    } else {
-      this.leadIndicator2D = null;
-    }
-
-    this.hudSyncManager.syncLeadHud(this.leadIndicator2D);
+    this.hudSyncManager.syncLeadHud(pilots, playerPilotId, this.aircraftRenderer.groupMap);
     this.hudSyncManager.syncCenterReticle(
       playerPilotId,
       playerPilot?.aircraftId,
       this.cameraManager.cameraMode,
       this.cameraManager.reticleTurbulenceX,
       this.cameraManager.reticleTurbulenceY,
-      this.aircraftGroupMap,
-      this.cockpitStateMap
+      this.aircraftRenderer.groupMap,
+      this.aircraftRenderer.cockpitStateMap
     );
 
     const playerDamageTotal = playerPilot

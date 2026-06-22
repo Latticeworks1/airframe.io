@@ -1,11 +1,13 @@
 import * as THREE from "three";
-import { LeadIndicatorInfo } from "../../types";
+import { LeadIndicatorInfo, Pilot, WeaponType } from "../../types";
 import { getCockpitDef } from "../content/aircraft/cockpitRegistry";
 import { AIRCRAFT_DEFINITIONS } from "../content/aircraft/registry";
 import { getSightRayLocal } from "../weaponConvergence";
+import { WEAPON_SPECS_MAP } from "../content/weapons/weaponData";
 
 export class HudSyncManager {
   private camera: THREE.Camera;
+  public leadIndicator2D: LeadIndicatorInfo | null = null;
   private _leadEls: {
     target: HTMLElement;
     lead: HTMLElement;
@@ -17,7 +19,82 @@ export class HudSyncManager {
     this.camera = camera;
   }
 
-  public syncLeadHud(leadIndicator2D: LeadIndicatorInfo | null) {
+  public syncLeadHud(
+    pilots: Pilot[],
+    playerPilotId: string,
+    aircraftGroupMap: Map<string, THREE.Group>
+  ) {
+    const playerPilot = pilots.find((p) => p.id === playerPilotId);
+    let lockedAdv: Pilot | null = null;
+    let bestDot = 0.94;
+    let lockedDist = 0;
+
+    if (playerPilot) {
+      const oppTeam = playerPilot.team === 1 ? 2 : 1;
+      const adversaries = pilots.filter((p) => p.team === oppTeam && p.damage.fuselage > 0);
+      const pGroup = aircraftGroupMap.get(playerPilotId);
+
+      if (pGroup) {
+        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(pGroup.quaternion).normalize();
+
+        adversaries.forEach((p) => {
+          const dx = p.x - playerPilot.x;
+          const dy = p.y - playerPilot.y;
+          const dz = p.z - playerPilot.z;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+          if (dist > 50 && dist < (playerPilot.specs.radarRange ?? 4500)) {
+            const dir = new THREE.Vector3(dx, dy, dz).normalize();
+            const dot = forward.dot(dir);
+            if (dot > bestDot) {
+              bestDot = dot;
+              lockedAdv = p;
+              lockedDist = dist;
+            }
+          }
+        });
+      }
+    }
+
+    if (lockedAdv && playerPilot) {
+      const adv = lockedAdv as Pilot;
+
+      const primaryWeapon = playerPilot.specs.weapons.find(
+        (w) => w !== WeaponType.ROCKET && w !== WeaponType.BOMB && (playerPilot.ammo[w] ?? 0) > 0
+      );
+      const muzzleVelocity = primaryWeapon ? WEAPON_SPECS_MAP[primaryWeapon].muzzleVelocity : 820;
+
+      const tdx = adv.x - playerPilot.x;
+      const tdy = adv.y - playerPilot.y;
+      const tdz = adv.z - playerPilot.z;
+      const toTarget = new THREE.Vector3(tdx, tdy, tdz).normalize();
+      const closingSpeed = toTarget.dot(new THREE.Vector3(playerPilot.vx, playerPilot.vy, playerPilot.vz));
+      const t = lockedDist / Math.max(1, muzzleVelocity + closingSpeed);
+
+      const futureX = adv.x + adv.vx * t;
+      const futureY = adv.y + adv.vy * t;
+      const futureZ = adv.z + adv.vz * t;
+
+      const pTarget = new THREE.Vector3(adv.x, adv.y, adv.z).project(this.camera);
+      const pLead = new THREE.Vector3(futureX, futureY, futureZ).project(this.camera);
+
+      if (pTarget.z <= 1.0 && pLead.z <= 1.0) {
+        this.leadIndicator2D = {
+          x: (pTarget.x * 0.5 + 0.5) * 100,
+          y: (-pTarget.y * 0.5 + 0.5) * 100,
+          sX: (pLead.x * 0.5 + 0.5) * 100,
+          sY: (-pLead.y * 0.5 + 0.5) * 100,
+          name: adv.name,
+          distance: Math.round(lockedDist),
+          isBot: adv.isBot ?? true
+        };
+      } else {
+        this.leadIndicator2D = null;
+      }
+    } else {
+      this.leadIndicator2D = null;
+    }
+
     if (!this._leadEls) {
       const target = document.getElementById("target-marker-box");
       const lead = document.getElementById("target-lead-dot-indicator");
@@ -33,7 +110,7 @@ export class HudSyncManager {
     }
     if (!this._leadEls) return;
     const { target, lead, distance, dot } = this._leadEls;
-    const ind = leadIndicator2D;
+    const ind = this.leadIndicator2D;
     if (!ind) {
       target.style.opacity = "0";
       lead.style.opacity = "0";
