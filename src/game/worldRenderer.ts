@@ -780,7 +780,9 @@ export class WorldRenderer {
     isFirstPerson: boolean
   ) {
     group.traverse((child) => {
-      if (!hiddenBlockIds.has(child.userData.blockId)) return;
+      const isPropeller = child.userData.role === "propeller" || (child.userData.tags && child.userData.tags.includes("spinZ"));
+      const isHidden = hiddenBlockIds.has(child.userData.blockId) || isPropeller;
+      if (!isHidden) return;
 
       if (isFirstPerson) {
         child.visible = false;
