@@ -45,8 +45,8 @@ export class TerrainBuilder {
     const landMat = new THREE.MeshLambertMaterial({
       flatShading: true,
       polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1
     });
     this.groundMaterial = landMat;
 
@@ -59,8 +59,8 @@ export class TerrainBuilder {
       const waterMat = new THREE.MeshBasicMaterial({
         color: waterColor,
         polygonOffset: true,
-        polygonOffsetFactor: 2, // Pushed further away than landMat (which is 1) to prevent z-fighting at steep camera angles
-        polygonOffsetUnits: 2
+        polygonOffsetFactor: -2, // Pushed further away than landMat (which is -1) to prevent z-fighting at steep camera angles
+        polygonOffsetUnits: -2
       });
       const waterMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(world.radius * 2, world.radius * 2),
@@ -79,7 +79,10 @@ export class TerrainBuilder {
       const skirtSize = world.radius * 12;
       const skirtMat = new THREE.MeshBasicMaterial({
         color: waterColor,
-        fog: true
+        fog: true,
+        polygonOffset: true,
+        polygonOffsetFactor: -2, // Pushed further away than landMat (which is -1) to prevent z-fighting at a distance
+        polygonOffsetUnits: -2
       });
       const skirtMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(skirtSize, skirtSize),
