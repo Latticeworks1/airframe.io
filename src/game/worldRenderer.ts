@@ -599,8 +599,17 @@ export class WorldRenderer {
         ? 52
         : THREE.MathUtils.clamp(65 + speedKmph / 28, 62, 92);
     this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 3);
-    this.camera.near =
+    
+    // Smoothly transition camera near plane to prevent clipping-plane pops
+    const targetNear =
       this.cameraMode === "third-person" ? 1 : this.cameraMode === "first-person" ? 0.04 : 0.25;
+    this.camera.near += (targetNear - this.camera.near) * Math.min(1, dt * 15);
+
+    // Smoothly transition cockpit light intensity to avoid lighting snaps
+    const targetLightIntensity = this.cameraMode === "first-person" ? 4.5 : 0;
+    if (this.cockpitLight) {
+      this.cockpitLight.intensity += (targetLightIntensity - this.cockpitLight.intensity) * Math.min(1, dt * 15);
+    }
 
     const isFreeLookActive = !!(inputFrame && inputFrame.rightMouse);
 
@@ -617,7 +626,6 @@ export class WorldRenderer {
     }
 
     if (this.cameraMode === "bombsight") {
-      if (this.cockpitLight) this.cockpitLight.intensity = 0;
       const ckEntry3 = this.cockpitStateMap.get(playerPilotId);
       if (ckEntry3) ckEntry3.group.visible = false;
       pGroup.visible = false;
@@ -638,8 +646,6 @@ export class WorldRenderer {
     } else if (this.cameraMode === "first-person") {
       pGroup.visible = true;
       this.setFirstPersonBlockVisibility(pGroup, playerPilot, hiddenBlockIds, true);
-
-      if (this.cockpitLight) this.cockpitLight.intensity = 4.5;
 
       const ckEntry = this.cockpitStateMap.get(playerPilotId);
       const localCockpitEye = ckEntry?.eyeLocal.clone()
@@ -686,7 +692,6 @@ export class WorldRenderer {
       this.camera.up.copy(rotatedUp);
       this.camera.lookAt(lookTarget);
     } else {
-      if (this.cockpitLight) this.cockpitLight.intensity = 0;
       const ckEntry2 = this.cockpitStateMap.get(playerPilotId);
       if (ckEntry2) ckEntry2.group.visible = false;
       pGroup.visible = true;
