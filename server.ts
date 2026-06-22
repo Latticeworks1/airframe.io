@@ -82,6 +82,7 @@ async function startServer() {
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "", `http://${request.headers.host}`);
+    console.log(`[ws upgrade] path=${url.pathname} origin=${request.headers.origin ?? "none"} proto=${request.headers["x-forwarded-proto"] ?? "direct"}`);
     if (url.pathname === "/multiplayer") {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);
@@ -96,6 +97,7 @@ async function startServer() {
   });
 
   wss.on("connection", (ws: WebSocket) => {
+    console.log(`[ws] client connected — total=${wss.clients.size}`);
     let currentRoomId: string | null = null;
     let currentPilotId: string | null = null;
     let currentSessionId: string | null = null;
@@ -440,6 +442,7 @@ async function startServer() {
     });
 
     ws.on("close", () => {
+      console.log(`[ws] client disconnected — pilot=${currentPilotId ?? "none"} remaining=${wss.clients.size}`);
       if (
         currentSessionId &&
         activeSessions.get(currentSessionId) === ws
