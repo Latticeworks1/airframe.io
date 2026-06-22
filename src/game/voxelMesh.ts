@@ -52,7 +52,12 @@ export function buildVoxelMesh(def: VoxelAircraftDef, shadows = true): VoxelMesh
   const spinSurface   = def.cells.filter(c =>  c.tags?.includes("spinZ"));
 
   const geo = new THREE.BoxGeometry(1, 1, 1);
-  const mat = new THREE.MeshLambertMaterial({ flatShading: true, vertexColors: true });
+  const mat = new THREE.MeshLambertMaterial({
+    flatShading: true,
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    emissive: new THREE.Color(0x000000)
+  });
 
   // Main mesh — static cells
   const mesh = new THREE.InstancedMesh(geo, mat, staticSurface.length);
@@ -278,10 +283,8 @@ export function animateSpinCells(
 export function setFPVMaterial(state: VoxelMeshState, fpv: boolean): void {
   const apply = (mesh: THREE.InstancedMesh) => {
     const mat = mesh.material as THREE.MeshLambertMaterial;
-    mat.side = fpv ? THREE.DoubleSide : THREE.FrontSide;
     mat.emissive.setHex(fpv ? 0x0d0b09 : 0x000000);
     mat.emissiveIntensity = fpv ? 0.6 : 0;
-    mat.needsUpdate = true;
   };
   apply(state.mesh);
   if (state.spinMesh) apply(state.spinMesh);

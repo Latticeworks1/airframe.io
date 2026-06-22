@@ -15,11 +15,31 @@ function disposeMaterial(m: THREE.Material | THREE.Material[]) {
   }
 }
 
+export interface SmokeParticle {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  baseScale: THREE.Vector3;
+  currentScale: number;
+  scaleSpeed: number;
+  color: number;
+  life: number;
+  maxLife: number;
+}
+
+export interface ExplosionBlob {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  baseScale: THREE.Vector3;
+  shrinkSpeed: number;
+  color: number;
+  life: number;
+}
+
 export class ParticleEffectsManager {
   private scene: THREE.Scene;
 
-  public smokeParticles: { mesh: THREE.Mesh; scaleSpeed: number; vel: THREE.Vector3; life: number }[] = [];
-  public explosionBlobs: { mesh: THREE.Mesh; shrinkSpeed: number; vel: THREE.Vector3; life: number }[] = [];
+  public smokeParticles: SmokeParticle[] = [];
+  public explosionBlobs: ExplosionBlob[] = [];
 
   public listProjectiles: {
     bulletId: string;
@@ -32,39 +52,68 @@ export class ParticleEffectsManager {
 
   public bulletInstMesh: THREE.InstancedMesh | null = null;
   public rocketInstMesh: THREE.InstancedMesh | null = null;
+  public smokeInstMesh: THREE.InstancedMesh | null = null;
+  public explosionInstMesh: THREE.InstancedMesh | null = null;
+
+  private readonly MAX_SMOKE = 2000;
+  private readonly MAX_EXPLOSION = 1000;
+
   private readonly _projDummy = new THREE.Object3D();
   private readonly _projColor = new THREE.Color();
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+    this.initInstancedMeshes();
+  }
+
+  private initInstancedMeshes() {
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    
+    // Smoke instanced mesh
+    const smokeMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.45
+    });
+    this.smokeInstMesh = new THREE.InstancedMesh(geo, smokeMat, this.MAX_SMOKE);
+    this.smokeInstMesh.count = 0;
+    this.scene.add(this.smokeInstMesh);
+
+    // Explosion instanced mesh
+    const expMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.8
+    });
+    this.explosionInstMesh = new THREE.InstancedMesh(geo.clone(), expMat, this.MAX_EXPLOSION);
+    this.explosionInstMesh.count = 0;
+    this.scene.add(this.explosionInstMesh);
   }
 
   public createSmokeTail(x: number, y: number, z: number, colorHex: number = 0x64748b, scale: number = 1.0) {
-    const geo = new THREE.BoxGeometry(
-      1.2 + Math.random() * 1.2,
-      1.2 + Math.random() * 1.2,
-      1.2 + Math.random() * 1.2
-    );
+    const rx = 1.2 + Math.random() * 1.2;
+    const ry = 1.2 + Math.random() * 1.2;
+    const rz = 1.2 + Math.random() * 1.2;
+    const baseScale = new THREE.Vector3(rx * scale, ry * scale, rz * scale);
 
-    const mat = new THREE.MeshBasicMaterial({
-      color: colorHex,
-      transparent: true,
-      opacity: 0.55
-    });
+    if (this.smokeParticles.length >= this.MAX_SMOKE) {
+      this.smokeParticles.shift(); // Remove oldest
+    }
 
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, y, z);
-    this.scene.add(mesh);
-
+    const life = 1.0 + Math.random() * 1.5;
     this.smokeParticles.push({
-      mesh,
-      scaleSpeed: 1.4 * scale,
+      pos: new THREE.Vector3(x, y, z),
       vel: new THREE.Vector3(
         (Math.random() - 0.5) * 6,
         3 + Math.random() * 4,
         (Math.random() - 0.5) * 6
       ),
-      life: 1.0 + Math.random() * 1.5
+      baseScale,
+      currentScale: 1.0,
+      scaleSpeed: 1.4 * scale,
+      color: colorHex,
+      life,
+      maxLife: life
     });
   }
 
@@ -73,68 +122,111 @@ export class ParticleEffectsManager {
     const colors = [0xef4444, 0xf97316, 0xeab308, 0x475569];
 
     for (let i = 0; i < shardCount; i++) {
-      const geo = new THREE.BoxGeometry(
-        1.0 + Math.random() * 2 * sizeMultiplier,
-        1.0 + Math.random() * 2 * sizeMultiplier,
-        1.0 + Math.random() * 2 * sizeMultiplier
-      );
+      const rx = 1.0 + Math.random() * 2 * sizeMultiplier;
+      const ry = 1.0 + Math.random() * 2 * sizeMultiplier;
+      const rz = 1.0 + Math.random() * 2 * sizeMultiplier;
+      const baseScale = new THREE.Vector3(rx, ry, rz);
 
-      const mat = new THREE.MeshBasicMaterial({
-        color: colors[Math.floor(Math.random() * colors.length)],
-        transparent: true,
-        opacity: 0.9
-      });
-
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(x, y, z);
-      this.scene.add(mesh);
+      if (this.explosionBlobs.length >= this.MAX_EXPLOSION) {
+        this.explosionBlobs.shift(); // Remove oldest
+      }
 
       this.explosionBlobs.push({
-        mesh,
-        shrinkSpeed: 0.8 / sizeMultiplier,
+        pos: new THREE.Vector3(x, y, z),
         vel: new THREE.Vector3(
           (Math.random() - 0.5) * 50 * sizeMultiplier,
           (Math.random() - 0.3) * 40 * sizeMultiplier,
           (Math.random() - 0.5) * 50 * sizeMultiplier
         ),
+        baseScale,
+        shrinkSpeed: 0.8 / sizeMultiplier,
+        color: colors[Math.floor(Math.random() * colors.length)],
         life: 0.6 + Math.random() * 0.9
       });
     }
   }
 
   public updateParticles(dt: number) {
+    // 1. Update smoke particles
     for (let i = this.smokeParticles.length - 1; i >= 0; i--) {
       const p = this.smokeParticles[i];
-
       p.life -= dt;
-      p.mesh.position.addScaledVector(p.vel, dt);
-      p.mesh.scale.multiplyScalar(1.0 + p.scaleSpeed * dt);
-
-      if (p.mesh.material instanceof THREE.MeshBasicMaterial) {
-        p.mesh.material.opacity = Math.max(0, p.life * 0.35);
-      }
-
       if (p.life <= 0) {
-        this.scene.remove(p.mesh);
-        p.mesh.geometry.dispose();
-        disposeMaterial(p.mesh.material);
         this.smokeParticles.splice(i, 1);
+        continue;
+      }
+      p.pos.addScaledVector(p.vel, dt);
+    }
+
+    // 2. Update explosion blobs
+    for (let i = this.explosionBlobs.length - 1; i >= 0; i--) {
+      const e = this.explosionBlobs[i];
+      e.life -= dt;
+      e.pos.addScaledVector(e.vel, dt);
+
+      const shrink = e.shrinkSpeed * dt;
+      e.baseScale.x = Math.max(0, e.baseScale.x - shrink);
+      e.baseScale.y = Math.max(0, e.baseScale.y - shrink);
+      e.baseScale.z = Math.max(0, e.baseScale.z - shrink);
+
+      if (e.baseScale.x <= 0.05 || e.life <= 0) {
+        this.explosionBlobs.splice(i, 1);
       }
     }
 
-    for (let i = this.explosionBlobs.length - 1; i >= 0; i--) {
-      const e = this.explosionBlobs[i];
+    // 3. Sync matrices and colors for smokeInstMesh
+    if (this.smokeInstMesh) {
+      let count = 0;
+      for (let i = 0; i < this.smokeParticles.length; i++) {
+        if (count >= this.MAX_SMOKE) break;
+        const p = this.smokeParticles[i];
 
-      e.life -= dt;
-      e.mesh.position.addScaledVector(e.vel, dt);
-      e.mesh.scale.subScalar(e.shrinkSpeed * dt);
+        // Grow, then shrink/fade in the last 30% of life
+        const ageNorm = 1.0 - (p.life / p.maxLife);
+        let scaleFactor = 1.0;
+        if (ageNorm < 0.7) {
+          p.currentScale += p.scaleSpeed * dt;
+          scaleFactor = p.currentScale;
+        } else {
+          const shrinkFactor = (1.0 - ageNorm) / 0.3;
+          scaleFactor = p.currentScale * Math.max(0, shrinkFactor);
+        }
 
-      if (e.mesh.scale.x < 0.1 || e.life <= 0) {
-        this.scene.remove(e.mesh);
-        e.mesh.geometry.dispose();
-        disposeMaterial(e.mesh.material);
-        this.explosionBlobs.splice(i, 1);
+        this._projDummy.position.copy(p.pos);
+        this._projDummy.quaternion.set(0, 0, 0, 1); // Identity rotation
+        this._projDummy.scale.copy(p.baseScale).multiplyScalar(scaleFactor);
+        this._projDummy.updateMatrix();
+
+        this.smokeInstMesh.setMatrixAt(count, this._projDummy.matrix);
+        this._projColor.setHex(p.color);
+        this.smokeInstMesh.setColorAt(count, this._projColor);
+        count++;
       }
+      this.smokeInstMesh.count = count;
+      this.smokeInstMesh.instanceMatrix.needsUpdate = true;
+      if (this.smokeInstMesh.instanceColor) this.smokeInstMesh.instanceColor.needsUpdate = true;
+    }
+
+    // 4. Sync matrices and colors for explosionInstMesh
+    if (this.explosionInstMesh) {
+      let count = 0;
+      for (let i = 0; i < this.explosionBlobs.length; i++) {
+        if (count >= this.MAX_EXPLOSION) break;
+        const e = this.explosionBlobs[i];
+
+        this._projDummy.position.copy(e.pos);
+        this._projDummy.quaternion.set(0, 0, 0, 1); // Identity rotation
+        this._projDummy.scale.copy(e.baseScale);
+        this._projDummy.updateMatrix();
+
+        this.explosionInstMesh.setMatrixAt(count, this._projDummy.matrix);
+        this._projColor.setHex(e.color);
+        this.explosionInstMesh.setColorAt(count, this._projColor);
+        count++;
+      }
+      this.explosionInstMesh.count = count;
+      this.explosionInstMesh.instanceMatrix.needsUpdate = true;
+      if (this.explosionInstMesh.instanceColor) this.explosionInstMesh.instanceColor.needsUpdate = true;
     }
   }
 
@@ -283,19 +375,20 @@ export class ParticleEffectsManager {
       (this.rocketInstMesh.material as THREE.Material).dispose();
       this.rocketInstMesh = null;
     }
-
-    for (const p of this.smokeParticles) {
-      this.scene.remove(p.mesh);
-      p.mesh.geometry.dispose();
-      disposeMaterial(p.mesh.material);
+    if (this.smokeInstMesh) {
+      this.scene.remove(this.smokeInstMesh);
+      this.smokeInstMesh.geometry.dispose();
+      (this.smokeInstMesh.material as THREE.Material).dispose();
+      this.smokeInstMesh = null;
     }
+    if (this.explosionInstMesh) {
+      this.scene.remove(this.explosionInstMesh);
+      this.explosionInstMesh.geometry.dispose();
+      (this.explosionInstMesh.material as THREE.Material).dispose();
+      this.explosionInstMesh = null;
+    }
+
     this.smokeParticles = [];
-
-    for (const e of this.explosionBlobs) {
-      this.scene.remove(e.mesh);
-      e.mesh.geometry.dispose();
-      disposeMaterial(e.mesh.material);
-    }
     this.explosionBlobs = [];
   }
 }
