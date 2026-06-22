@@ -256,7 +256,11 @@ export function updateFlightPhysics(
   localAngularVelocity.z = MathUtils.clamp(localAngularVelocity.z, -maxRateLimit, maxRateLimit);
 
   // 2. Control authority rolls off realistically at low speeds to simulate lack of over-wing flow
-  const controlAuthority = MathUtils.clamp((airspeedKmph / specs.stallSpeedKmph) * 1.12, 0.04, 1.25);
+  let controlAuthority = MathUtils.clamp((airspeedKmph / specs.stallSpeedKmph) * 1.12, 0.04, 1.25);
+  if (isCurrentlyStalled) {
+    // Reduce control authority significantly when stalled to prevent pilot/bot from overriding the nose-drop
+    controlAuthority *= 0.22;
+  }
 
   const directPitchRate = -pitchInput * (currentPitchRate * Math.PI / 180) * controlAuthority;
   const directYawRate = -yawInput * (currentYawRate * Math.PI / 180) * controlAuthority;
@@ -296,9 +300,11 @@ export function updateFlightPhysics(
       const wingDropFactor = pilot.stallSeverity * (specs.rollRateDegPerSec ?? 90) * (Math.PI / 180) * 1.6;
       localAngularVelocity.z += Math.sin(dropFreq) * wingDropFactor * dt; // Z is roll
       localAngularVelocity.y += Math.cos(dropFreq + 1.1) * wingDropFactor * 0.35 * dt; // Y is yaw
-      // Nose-heavy center-of-gravity moment forces a rapid pitching drop to recover airspeed
-      localAngularVelocity.x -= 0.72 * pilot.stallSeverity * dt; // X is pitch
     }
+    
+    // Nose-heavy center-of-gravity moment forces a rapid pitching drop to recover airspeed
+    // This must apply at all speeds to ensure the aircraft naturally falls nose-down when stalled
+    localAngularVelocity.x -= 0.92 * pilot.stallSeverity * dt; // X is pitch
   } else {
     pilot.isStalling = false;
     pilot.stallSeverity = 0;

@@ -105,6 +105,9 @@ function getLiftCoefficient(alphaDeg: number, clSlopePerDeg: number, clMax: numb
   } else {
     const stallT = THREE.MathUtils.clamp((absA - stallDeg) / stallWidth, 0, 1);
     let cl = THREE.MathUtils.lerp(clMax, stalledCL, stallT);
+    // Lift drops off to zero as angle of attack approaches 90 degrees
+    const postStallDrop = Math.cos(THREE.MathUtils.degToRad(Math.min(90, absA)));
+    cl *= postStallDrop;
     if (sign < 0) cl *= 0.75;
     return cl * sign;
   }
