@@ -859,6 +859,13 @@ export class GameEngine {
           pilot.vx *= correction;
           pilot.vz *= correction;
         }
+
+        if (pilot.isBot) {
+          // Snap bot orientation inward to prevent boundary locking
+          pilot.yaw = Math.atan2(-pilot.x, -pilot.z);
+          pilot.pitch = 0;
+          pilot.roll = 0;
+        }
       }
     }
   }
@@ -910,13 +917,15 @@ export class GameEngine {
   }
 
   private runAIConsensus(bot: Pilot, dt: number) {
+    const mapRadius = MAP_REGISTRY[this.selectedMapId]?.world?.radius ?? 6000;
     BotAISystem.runAIConsensus(
       bot,
       dt,
       this.pilots,
       this.groundTargets,
       this.skyZones,
-      (p, prim, sec, d) => this.handleWeaponFiring(p, prim, sec, d)
+      (p, prim, sec, d) => this.handleWeaponFiring(p, prim, sec, d),
+      mapRadius
     );
   }
 

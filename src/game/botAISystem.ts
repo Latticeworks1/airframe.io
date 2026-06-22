@@ -26,13 +26,25 @@ export class BotAISystem {
     pilots: Pilot[],
     groundTargets: GroundTarget[],
     skyZones: SkyZone[],
-    handleWeaponFiring: (pilot: Pilot, triggerPrimary: boolean, triggerSecondary: boolean, dt: number) => void
+    handleWeaponFiring: (pilot: Pilot, triggerPrimary: boolean, triggerSecondary: boolean, dt: number) => void,
+    mapRadius: number = 6000
   ) {
     if (!bot.aiState) return;
 
     bot.aiState.timer -= dt;
 
     const botPos = new Vector3(bot.x, bot.y, bot.z);
+
+    // Map Boundary turn-back logic for bots
+    const distFromCenter = Math.sqrt(bot.x * bot.x + bot.z * bot.z);
+    if (distFromCenter > mapRadius * 0.78) {
+      bot.aiState.behavior = "patrol";
+      bot.aiState.destinationX = -bot.x * 0.2; // Head back inside
+      bot.aiState.destinationY = 550;
+      bot.aiState.destinationZ = -bot.z * 0.2;
+      bot.throttle = 1.0; // Max speed to return to battle
+      return;
+    }
     const opponentTeam = bot.team === 1 ? 2 : 1;
     const enemies = pilots.filter(
       p => p.team === opponentTeam && p.damage.fuselage > 0

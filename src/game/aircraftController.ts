@@ -121,8 +121,15 @@ export class AircraftController {
 
           // Max realistic manual roll controls: The autopilot/instructor is disabled for the roll axis.
           // It will never fight your custom bank angle or force the aircraft back to center.
-          instructorRoll = 0;
+          if (pilot.isBot) {
+            instructorRoll = MathUtils.clamp(targetInRight * 2.8, -1.0, 1.0);
+          } else {
+            instructorRoll = 0;
+          }
         }
+      } else if (pilot.isBot) {
+        // Automatically level wings when flying straight or without target
+        instructorRoll = MathUtils.clamp(-pilot.roll * 2.0, -1.0, 1.0);
       }
 
       // Smooth per-axis fading mixer

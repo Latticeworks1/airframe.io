@@ -42,36 +42,37 @@ export function createAircraftMesh(def: AircraftRenderDef): THREE.Group {
   return group;
 }
 
+// Shared unit geometries for memory and draw efficiency
+const unitBox = new THREE.BoxGeometry(1, 1, 1);
+const unitCylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 8);
+const unitSphere = new THREE.SphereGeometry(0.5, 8, 8);
+const unitWedge = createWedgeGeometry(1, 1, 1);
+
+function getSharedGeometry(kind: string): THREE.BufferGeometry {
+  switch (kind) {
+    case "box": return unitBox;
+    case "cylinder": return unitCylinder;
+    case "sphere": return unitSphere;
+    case "wedge": return unitWedge;
+    default: return unitBox;
+  }
+}
+
 function buildBlockMesh(
   block: BlockPrimitiveDef,
   material: THREE.Material
 ): THREE.Mesh {
-  const geometry = makeGeometry(block);
+  const geometry = getSharedGeometry(block.kind);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = block.id;
   mesh.position.set(...block.position);
+  mesh.scale.set(...block.scale);
   if (block.rotation) {
     mesh.rotation.set(...block.rotation);
   }
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
-}
-
-function makeGeometry(block: BlockPrimitiveDef): THREE.BufferGeometry {
-  const [x, y, z] = block.scale;
-  switch (block.kind) {
-    case "box":
-      return new THREE.BoxGeometry(x, y, z);
-    case "wedge":
-      return createWedgeGeometry(x, y, z);
-    case "cylinder":
-      return new THREE.CylinderGeometry(x / 2, x / 2, y, 8);
-    case "sphere":
-      return new THREE.SphereGeometry(x / 2, 8, 8);
-    default:
-      return new THREE.BoxGeometry(x, y, z);
-  }
 }
 
 function createWedgeGeometry(width: number, height: number, depth: number) {
