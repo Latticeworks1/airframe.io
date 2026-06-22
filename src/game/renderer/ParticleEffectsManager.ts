@@ -60,6 +60,13 @@ export class ParticleEffectsManager {
 
   private readonly _projDummy = new THREE.Object3D();
   private readonly _projColor = new THREE.Color();
+  private readonly _velDir = new THREE.Vector3();
+  private readonly _toCamera = new THREE.Vector3();
+  private readonly _toCamPerp = new THREE.Vector3();
+  private readonly _planeNormal = new THREE.Vector3();
+  private readonly _cross = new THREE.Vector3();
+  private readonly _billboardQ = new THREE.Quaternion();
+  private readonly _baseQ = new THREE.Quaternion();
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -240,8 +247,12 @@ export class ParticleEffectsManager {
 
   public syncProjectiles(projectiles: Projectile[], playerPilotId: string, camera: THREE.Camera, dt: number) {
     if (!this.bulletInstMesh) {
-      const geo = new THREE.BoxGeometry(0.264, 0.264, 16.8);
-      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true });
+      // PlaneGeometry oriented along Z so the tracer length runs with the velocity vector.
+      // rotateX(-PI/2) maps the plane's original Y axis (height) to +Z and makes the surface
+      // normal point along +Y, which the per-bullet billboard rotation then steers toward the camera.
+      const geo = new THREE.PlaneGeometry(0.52, 16.8);
+      geo.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, side: THREE.DoubleSide });
       this.bulletInstMesh = new THREE.InstancedMesh(geo, mat, 2000);
       const bulletColors = new Float32Array(2000 * 3);
       bulletColors.fill(1);
@@ -250,8 +261,9 @@ export class ParticleEffectsManager {
       this.scene.add(this.bulletInstMesh);
     }
     if (!this.rocketInstMesh) {
-      const geo = new THREE.BoxGeometry(0.66, 0.66, 42);
-      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true });
+      const geo = new THREE.PlaneGeometry(1.2, 42);
+      geo.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, side: THREE.DoubleSide });
       this.rocketInstMesh = new THREE.InstancedMesh(geo, mat, 200);
       const rocketColors = new Float32Array(200 * 3);
       rocketColors.fill(1);
@@ -326,21 +338,49 @@ export class ParticleEffectsManager {
       const entry = this.listProjectiles.find(e => e.bulletId === p.id);
       if (!entry) continue;
 
-      const speedVec = new THREE.Vector3(p.vx, p.vy, p.vz);
-      const quat =
-        speedVec.lengthSq() > 0
-          ? new THREE.Quaternion().setFromUnitVectors(LOCAL_FORWARD.clone(), speedVec.normalize())
-          : new THREE.Quaternion();
+      this._velDir.set(p.vx, p.vy, p.vz);
+      const hasVel = this._velDir.lengthSq() > 0;
+      if (hasVel) this._velDir.normalize();
+
+      if (hasVel) {
+        this._baseQ.setFromUnitVectors(LOCAL_FORWARD.clone(), this._velDir);
+      } else {
+        this._baseQ.identity();
+      }
 
       if (entry.bombMesh) {
         entry.bombMesh.position.set(p.x, p.y, p.z);
-        entry.bombMesh.quaternion.copy(quat);
+        entry.bombMesh.quaternion.copy(this._baseQ);
         entry.bombMesh.rotateOnAxis(LOCAL_FORWARD, entry.age * 4.2);
         continue;
       }
 
+      // Billboard rotation: rotate the plane around the velocity axis so its normal
+      // always faces the camera, making the tracer visible from all angles.
+      let finalQ = this._baseQ;
+      if (hasVel) {
+        this._toCamera.set(
+          camera.position.x - p.x,
+          camera.position.y - p.y,
+          camera.position.z - p.z
+        );
+        const along = this._toCamera.dot(this._velDir);
+        this._toCamPerp.copy(this._toCamera).addScaledVector(this._velDir, -along);
+        const perpLen = this._toCamPerp.length();
+        if (perpLen > 0.001) {
+          this._toCamPerp.divideScalar(perpLen);
+          // After baseQ the plane surface normal is local +Y (see geometry comment above)
+          this._planeNormal.set(0, 1, 0).applyQuaternion(this._baseQ);
+          this._cross.crossVectors(this._planeNormal, this._toCamPerp);
+          const sinAngle = this._cross.dot(this._velDir);
+          const cosAngle = this._planeNormal.dot(this._toCamPerp);
+          this._billboardQ.setFromAxisAngle(this._velDir, Math.atan2(sinAngle, cosAngle));
+          finalQ = this._billboardQ.multiply(this._baseQ);
+        }
+      }
+
       this._projDummy.position.set(p.x, p.y, p.z);
-      this._projDummy.quaternion.copy(quat);
+      this._projDummy.quaternion.copy(finalQ);
       this._projDummy.updateMatrix();
       this._projColor.setHex(entry.color);
 

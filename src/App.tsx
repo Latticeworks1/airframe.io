@@ -498,21 +498,35 @@ export default function App() {
       ) {
         lastSendTime = now;
         if (localPlayer) {
+          const r1 = (v: number) => Math.round(v * 10) / 10;
+          const r3 = (v: number) => Math.round(v * 1000) / 1000;
+          const r2d = (v: number) => Math.round(v * 100) / 100;
+          const dm = localPlayer.damage;
           socketRef.current.send(
             JSON.stringify({
               type: "update",
               pilotState: {
-                x: localPlayer.x,
-                y: localPlayer.y,
-                z: localPlayer.z,
-                vx: localPlayer.vx,
-                vy: localPlayer.vy,
-                vz: localPlayer.vz,
-                pitch: localPlayer.pitch,
-                yaw: localPlayer.yaw,
-                roll: localPlayer.roll,
-                throttle: localPlayer.throttle,
-                damage: localPlayer.damage,
+                x: r1(localPlayer.x),
+                y: r1(localPlayer.y),
+                z: r1(localPlayer.z),
+                vx: r2d(localPlayer.vx),
+                vy: r2d(localPlayer.vy),
+                vz: r2d(localPlayer.vz),
+                pitch: r3(localPlayer.pitch),
+                yaw: r3(localPlayer.yaw),
+                roll: r3(localPlayer.roll),
+                throttle: r2d(localPlayer.throttle),
+                damage: {
+                  engine: r2d(dm.engine),
+                  leftWing: r2d(dm.leftWing),
+                  rightWing: r2d(dm.rightWing),
+                  tail: r2d(dm.tail),
+                  cockpit: r2d(dm.cockpit),
+                  fuelTank: r2d(dm.fuelTank),
+                  fuselage: r2d(dm.fuselage),
+                  hasFire: dm.hasFire,
+                  hasOilLeak: dm.hasOilLeak
+                },
                 ammo: localPlayer.ammo,
                 score: localPlayer.score,
                 kills: localPlayer.kills,
@@ -525,20 +539,33 @@ export default function App() {
         if (engine.isHost) {
           const syncBots = engine.pilots
             .filter(p => p.isBot)
-            .map(b => ({
-              id: b.id,
-              x: b.x,
-              y: b.y,
-              z: b.z,
-              vx: b.vx,
-              vy: b.vy,
-              vz: b.vz,
-              pitch: b.pitch,
-              yaw: b.yaw,
-              roll: b.roll,
-              throttle: b.throttle,
-              damage: b.damage
-            }));
+            .map(b => {
+              const bd = b.damage;
+              return {
+                id: b.id,
+                x: Math.round(b.x * 10) / 10,
+                y: Math.round(b.y * 10) / 10,
+                z: Math.round(b.z * 10) / 10,
+                vx: Math.round(b.vx * 100) / 100,
+                vy: Math.round(b.vy * 100) / 100,
+                vz: Math.round(b.vz * 100) / 100,
+                pitch: Math.round(b.pitch * 1000) / 1000,
+                yaw: Math.round(b.yaw * 1000) / 1000,
+                roll: Math.round(b.roll * 1000) / 1000,
+                throttle: Math.round(b.throttle * 100) / 100,
+                damage: {
+                  engine: Math.round(bd.engine * 100) / 100,
+                  leftWing: Math.round(bd.leftWing * 100) / 100,
+                  rightWing: Math.round(bd.rightWing * 100) / 100,
+                  tail: Math.round(bd.tail * 100) / 100,
+                  cockpit: Math.round(bd.cockpit * 100) / 100,
+                  fuelTank: Math.round(bd.fuelTank * 100) / 100,
+                  fuselage: Math.round(bd.fuselage * 100) / 100,
+                  hasFire: bd.hasFire,
+                  hasOilLeak: bd.hasOilLeak
+                }
+              };
+            });
 
           socketRef.current.send(
             JSON.stringify({

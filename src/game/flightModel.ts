@@ -5,6 +5,7 @@
 
 import { Vector3, Quaternion, Euler, MathUtils } from "three";
 import { Pilot, FlightCommand, AircraftSpecs } from "../types";
+import { physical, locomotive, destructible, control } from "../types/components";
 import { AerodynamicsEngine } from "./aeroSurfaceModel";
 import { getTerrainHeight } from "./terrainModel";
 import { MAP_REGISTRY } from "./content/maps/registry";
@@ -126,23 +127,26 @@ export function updateFlightPhysics(
   if (dt <= 0) return;
   dt = Math.min(dt, 0.05);
 
+  // Extract components once to avoid repeated Map lookups on each property access
+  const phys = physical(pilot.entity);
+  const loco = locomotive(pilot.entity);
+  const destr = destructible(pilot.entity);
+  const ctrl = control(pilot.entity);
+  const dm = destr.damageModel!;
+
   const specs = applyModifications(pilot.specs, pilot.modifications);
 
   requireSpecInRange(specs, "wingArea", 8, 70);
   requireSpecInRange(specs, "aspectRatio", 3, 12);
   requireSpecInRange(specs, "oswaldEfficiency", 0.55, 0.95);
 
-  const pos = new Vector3(pilot.x, pilot.y, pilot.z);
-  const vel = new Vector3(pilot.vx, pilot.vy, pilot.vz);
+  const pos = new Vector3(phys.x, phys.y, phys.z);
+  const vel = new Vector3(phys.vx, phys.vy, phys.vz);
 
   let speed = vel.length();
   let speedKmph = speed * 3.6;
 
-  let { q, forward } = getAircraftBasis(
-    pilot.pitch,
-    pilot.yaw,
-    pilot.roll
-  );
+  let { q, forward } = getAircraftBasis(phys.pitch, phys.yaw, phys.roll);
 
   let pitchInput = command.pitch;
   let rollInput = command.roll;
@@ -151,49 +155,49 @@ export function updateFlightPhysics(
   const boost = command.boost;
   const airbrake = command.airbrake;
 
-  pilot.throttle = MathUtils.clamp(
-    pilot.throttle + throttleInput * dt * 0.65,
+  loco.throttle = MathUtils.clamp(
+    loco.throttle + throttleInput * dt * 0.65,
     0.0,
     boost ? 1.1 : 1.0
   );
 
   if (boost) {
-    pilot.throttle = Math.min(1.1, pilot.throttle + dt * 0.35);
+    loco.throttle = Math.min(1.1, loco.throttle + dt * 0.35);
   }
 
-  const targetTemp = 50 + pilot.throttle * 70;
-  pilot.engineTemperature +=
-    (targetTemp - pilot.engineTemperature) * dt * 0.05;
+  const targetTemp = 50 + loco.throttle * 70;
+  loco.engineTemperature = (loco.engineTemperature ?? 75) +
+    (targetTemp - (loco.engineTemperature ?? 75)) * dt * 0.05;
 
-  const engineHealth = pilot.damage.engine;
-  const leftWingHealth = pilot.damage.leftWing;
-  const rightWingHealth = pilot.damage.rightWing;
-  const tailHealth = pilot.damage.tail;
-  const cockpitHealth = pilot.damage.cockpit;
+  const engineHealth = dm.engine;
+  const leftWingHealth = dm.leftWing;
+  const rightWingHealth = dm.rightWing;
+  const tailHealth = dm.tail;
+  const cockpitHealth = dm.cockpit;
   const wingHealth = (leftWingHealth + rightWingHealth) / 2;
   const controlFactor = 0.3 + 0.7 * cockpitHealth;
 
   // Append roll asymmetry from wing damage
   rollInput -= (rightWingHealth - leftWingHealth) * 0.3;
 
-  pilot.airbrakeDeployed = command.airbrake;
-  pilot.flaps = command.flaps;
-  pilot.gearDeployed = command.gearDeployed;
+  loco.airbrakeDeployed = command.airbrake;
+  loco.flaps = command.flaps;
+  loco.gearDeployed = command.gearDeployed;
 
   // Physical separation: Raw input -> Pilot Intent -> Actuator Deflection rate limit
-  pilot.pitchIntent = approach(pilot.pitchIntent ?? 0, pitchInput, 3.2, dt);
-  pilot.rollIntent = approach(pilot.rollIntent ?? 0, rollInput, 4.2, dt);
-  pilot.yawIntent = approach(pilot.yawIntent ?? 0, yawInput, 2.2, dt);
+  ctrl.pitchIntent = approach(ctrl.pitchIntent ?? 0, pitchInput, 3.2, dt);
+  ctrl.rollIntent = approach(ctrl.rollIntent ?? 0, rollInput, 4.2, dt);
+  ctrl.yawIntent = approach(ctrl.yawIntent ?? 0, yawInput, 2.2, dt);
 
   // Surfaces actuator physical lag
-  pilot.elevatorDeflection = approach(pilot.elevatorDeflection ?? 0, pilot.pitchIntent, 4.5, dt);
-  pilot.aileronDeflection = approach(pilot.aileronDeflection ?? 0, pilot.rollIntent, 5.5, dt);
-  pilot.rudderDeflection = approach(pilot.rudderDeflection ?? 0, pilot.yawIntent, 3.8, dt);
+  ctrl.elevatorDeflection = approach(ctrl.elevatorDeflection ?? 0, ctrl.pitchIntent, 4.5, dt);
+  ctrl.aileronDeflection = approach(ctrl.aileronDeflection ?? 0, ctrl.rollIntent, 5.5, dt);
+  ctrl.rudderDeflection = approach(ctrl.rudderDeflection ?? 0, ctrl.yawIntent, 3.8, dt);
 
   // Apply continuous smoothed surface deflections downstream
-  pitchInput = pilot.elevatorDeflection;
-  rollInput = pilot.aileronDeflection;
-  yawInput = pilot.rudderDeflection;
+  pitchInput = ctrl.elevatorDeflection;
+  rollInput = ctrl.aileronDeflection;
+  yawInput = ctrl.rudderDeflection;
 
   const currentPitchRate =
     (specs.pitchRateDegPerSec ?? 45) * (0.3 + 0.7 * tailHealth) * controlFactor;
@@ -206,9 +210,9 @@ export function updateFlightPhysics(
 
   // Active Angular Velocity matching pilot model (X = Pitch, Y = Yaw, Z = Roll)
   const localAngularVelocity = new Vector3(
-    pilot.avx ?? 0, // pitch
-    pilot.avy ?? 0, // yaw
-    pilot.avz ?? 0  // roll
+    phys.avx ?? 0, // pitch
+    phys.avy ?? 0, // yaw
+    phys.avz ?? 0  // roll
   );
 
   const terrainInfo = getTerrainHeight(pos.x, pos.z, mapId);
@@ -277,8 +281,8 @@ export function updateFlightPhysics(
   let stallBuffetYaw = 0;
 
   if (isCurrentlyStalled) {
-    pilot.isStalling = true;
-    pilot.stallSeverity = MathUtils.clamp(
+    loco.isStalling = true;
+    loco.stallSeverity = MathUtils.clamp(
       isStallingByAoA
         ? (initialAlphaDeg - 17.5) / 10
         : (specs.stallSpeedKmph * 1.05 - airspeedKmph) / (specs.stallSpeedKmph * 0.35),
@@ -289,7 +293,7 @@ export function updateFlightPhysics(
     // High frequency buffeting (structural shaking)
     const shakeTime = Date.now() * 0.001;
     const buffetFreq = 25.0; // 25 Hz structural flutter
-    const buffetAmp = pilot.stallSeverity * 0.32;
+    const buffetAmp = loco.stallSeverity * 0.32;
     stallBuffetRoll = Math.sin(shakeTime * (buffetFreq + 1.2)) * buffetAmp;       // Z axis
     stallBuffetPitch = Math.cos(shakeTime * buffetFreq) * buffetAmp * 0.75;       // X axis
     stallBuffetYaw = Math.sin(shakeTime * (buffetFreq - 4.0)) * buffetAmp * 0.22; // Y axis
@@ -297,17 +301,17 @@ export function updateFlightPhysics(
     // Wing drop spins: when stalled, steering actions or minor slips flip the wing into an uncontrolled roll and deep dive
     if (airspeedKmph > 18) {
       const dropFreq = Date.now() * 0.0015;
-      const wingDropFactor = pilot.stallSeverity * (specs.rollRateDegPerSec ?? 90) * (Math.PI / 180) * 1.6;
+      const wingDropFactor = loco.stallSeverity * (specs.rollRateDegPerSec ?? 90) * (Math.PI / 180) * 1.6;
       localAngularVelocity.z += Math.sin(dropFreq) * wingDropFactor * dt; // Z is roll
       localAngularVelocity.y += Math.cos(dropFreq + 1.1) * wingDropFactor * 0.35 * dt; // Y is yaw
     }
-    
+
     // Nose-heavy center-of-gravity moment forces a rapid pitching drop to recover airspeed
     // This must apply at all speeds to ensure the aircraft naturally falls nose-down when stalled
-    localAngularVelocity.x -= 0.92 * pilot.stallSeverity * dt; // X is pitch
+    localAngularVelocity.x -= 0.92 * loco.stallSeverity * dt; // X is pitch
   } else {
-    pilot.isStalling = false;
-    pilot.stallSeverity = 0;
+    loco.isStalling = false;
+    loco.stallSeverity = 0;
   }
 
   // Combine integrated rates, inputs and buffeting components
@@ -316,7 +320,7 @@ export function updateFlightPhysics(
   const totalRollRate = finalRollRate + stallBuffetRoll;     // Roll is Z
 
   // 4. One-Shot Quaternion Integration to perfectly evolve attitude without Euler locks
-  const qCurrent = getAircraftQuaternion(pilot.pitch, pilot.yaw, pilot.roll);
+  const qCurrent = getAircraftQuaternion(phys.pitch, phys.yaw, phys.roll);
   const omega = new Vector3(totalPitchRate, totalYawRate, totalRollRate);
   const omegaMag = omega.length();
   if (omegaMag > 1e-8) {
@@ -327,28 +331,24 @@ export function updateFlightPhysics(
   }
 
   const nextEuler = new Euler().setFromQuaternion(qCurrent, "YXZ");
-  pilot.pitch = nextEuler.x;
-  pilot.yaw = wrapPi(nextEuler.y);
-  pilot.roll = wrapPi(nextEuler.z);
+  phys.pitch = nextEuler.x;
+  phys.yaw = wrapPi(nextEuler.y);
+  phys.roll = wrapPi(nextEuler.z);
 
   // Takeoff & rollout attitude stabilization: prevent wings dipping or nose diving below takeoff speed on ground
   const terrainCheckForAttitude = getTerrainHeight(pos.x, pos.z, mapId);
   if (pos.y <= terrainCheckForAttitude.height + 1.2 && speed * 3.6 < 130) {
-    pilot.pitch = MathUtils.clamp(pilot.pitch, -0.01, 0.05); // slight positive nose lift permitted, no tuck or extreme pitch
-    pilot.roll = 0; // maintain wings level on takeoff run
+    phys.pitch = MathUtils.clamp(phys.pitch, -0.01, 0.05);
+    phys.roll = 0;
   }
 
   // Store angular rates back into the pilot's kinematic registers
-  pilot.avx = totalPitchRate; // X is pitch
-  pilot.avy = totalYawRate;   // Y is yaw
-  pilot.avz = totalRollRate;  // Z is roll
+  phys.avx = totalPitchRate; // X is pitch
+  phys.avy = totalYawRate;   // Y is yaw
+  phys.avz = totalRollRate;  // Z is roll
 
   // Recalculate 3D basis vectors
-  ({ q, forward } = getAircraftBasis(
-    pilot.pitch,
-    pilot.yaw,
-    pilot.roll
-  ));
+  ({ q, forward } = getAircraftBasis(phys.pitch, phys.yaw, phys.roll));
 
   // Compute aerodynamic forces using updated orientation frame
   speed = vel.length();
@@ -363,7 +363,7 @@ export function updateFlightPhysics(
     1.0
   );
 
-  const throttle01 = MathUtils.clamp(pilot.throttle, 0, 1.0);
+  const throttle01 = MathUtils.clamp(loco.throttle, 0, 1.0);
   const thrustBoost = boost ? 1.08 : 1.0;
   // Propeller thrust falls as forward speed approaches the aircraft's design
   // envelope. Without this lapse, constant static thrust remains available at
@@ -393,10 +393,17 @@ export function updateFlightPhysics(
     .add(gravityForce)
     .add(aero.force);
 
+  // In a vertical climb the AoA is near 0° so the per-surface stall drag never
+  // fires. We impose an additional downward force when stalled so altitude loss
+  // is guaranteed regardless of aircraft orientation or available thrust.
+  if (isCurrentlyStalled) {
+    totalForce.y -= specs.mass * G * loco.stallSeverity * 2.4;
+  }
+
   const accel = totalForce.divideScalar(specs.mass);
   vel.addScaledVector(accel, dt);
 
-  const stalled = pilot.isStalling ?? false;
+  const stalled = loco.isStalling ?? false;
 
   let alignmentAlpha = MathUtils.clamp(
     (airspeedKmph / Math.max(1, specs.stallSpeedKmph)) * 0.08,
@@ -422,18 +429,9 @@ export function updateFlightPhysics(
 
     if (excess > 10) {
       const severity = Math.min(1, excess / 180);
-      pilot.damage.leftWing = Math.max(
-        0,
-        pilot.damage.leftWing - dt * 0.05 * severity
-      );
-      pilot.damage.rightWing = Math.max(
-        0,
-        pilot.damage.rightWing - dt * 0.05 * severity
-      );
-      pilot.damage.fuselage = Math.max(
-        0.1,
-        pilot.damage.fuselage - dt * 0.02 * severity
-      );
+      dm.leftWing = Math.max(0, dm.leftWing - dt * 0.05 * severity);
+      dm.rightWing = Math.max(0, dm.rightWing - dt * 0.05 * severity);
+      dm.fuselage = Math.max(0.1, dm.fuselage - dt * 0.02 * severity);
     }
   }
 
@@ -451,59 +449,50 @@ export function updateFlightPhysics(
 
     if (!isAirfield) {
       // Off-airfield rough landing
-      if (pilot.gearDeployed && sinkRate < 4.0 && speedKmph < 185) {
-        // High damage rollout over rough fields
-        pilot.damage.fuselage = Math.max(0.15, pilot.damage.fuselage - dt * 0.12);
+      if (loco.gearDeployed && sinkRate < 4.0 && speedKmph < 185) {
+        dm.fuselage = Math.max(0.15, dm.fuselage - dt * 0.12);
         const rolloutSpeed = Math.max(0, vel.length() - dt * 45.0);
         vel.copy(forward).multiplyScalar(rolloutSpeed);
-        if (rolloutSpeed * 3.6 < 5 && pilot.throttle < 0.1) vel.set(0, 0, 0);
+        if (rolloutSpeed * 3.6 < 5 && loco.throttle < 0.1) vel.set(0, 0, 0);
       } else {
-        // Off-airfield high speed crash
-        pilot.damage.fuselage = 0;
-        pilot.damage.engine = 0;
+        dm.fuselage = 0;
+        dm.engine = 0;
       }
     } else {
       // Landing on actual airfield runway
-      if (pilot.gearDeployed) {
+      if (loco.gearDeployed) {
         if (sinkRate >= 8.5) {
-          // Instant high impact crash
-          pilot.damage.fuselage = 0;
-          pilot.damage.engine = 0;
+          dm.fuselage = 0;
+          dm.engine = 0;
         } else if (sinkRate >= 4.5) {
-          // Gear collapse / hard landing (damages engine & collapses gear!)
-          pilot.damage.fuselage = Math.max(0.1, pilot.damage.fuselage - 0.45);
-          pilot.gearDeployed = false;
-          pilot.damage.engine = Math.max(0.0, pilot.damage.engine - 0.25);
-          // Friction rollout as a belly slide
+          dm.fuselage = Math.max(0.1, dm.fuselage - 0.45);
+          loco.gearDeployed = false;
+          dm.engine = Math.max(0.0, dm.engine - 0.25);
           const rolloutSpeed = Math.max(0, vel.length() - dt * 65.0);
           vel.copy(forward).multiplyScalar(rolloutSpeed);
-          if (rolloutSpeed * 3.6 < 5 && pilot.throttle < 0.1) vel.set(0, 0, 0);
+          if (rolloutSpeed * 3.6 < 5 && loco.throttle < 0.1) vel.set(0, 0, 0);
         } else {
-          // Clean gear landing with standard airfield rollout
           const rolloutSpeed = Math.max(0, vel.length() - dt * 14.5);
           vel.copy(forward).multiplyScalar(rolloutSpeed);
-          if (rolloutSpeed * 3.6 < 5 && pilot.throttle < 0.1) vel.set(0, 0, 0);
+          if (rolloutSpeed * 3.6 < 5 && loco.throttle < 0.1) vel.set(0, 0, 0);
         }
       } else {
         // Belly slide (Gear-Up Landing on runway)
         if (sinkRate >= 5.5) {
-          // Fatal slide crash
-          pilot.damage.fuselage = 0;
-          pilot.damage.engine = 0;
+          dm.fuselage = 0;
+          dm.engine = 0;
         } else if (sinkRate >= 2.8) {
-          // Rough belly slide
-          pilot.damage.fuselage = Math.max(0.1, pilot.damage.fuselage - 0.55);
-          pilot.damage.engine = 0.0; // Engine failure
+          dm.fuselage = Math.max(0.1, dm.fuselage - 0.55);
+          dm.engine = 0.0;
           const rolloutSpeed = Math.max(0, vel.length() - dt * 55.0);
           vel.copy(forward).multiplyScalar(rolloutSpeed);
-          if (rolloutSpeed * 3.6 < 5 && pilot.throttle < 0.1) vel.set(0, 0, 0);
+          if (rolloutSpeed * 3.6 < 5 && loco.throttle < 0.1) vel.set(0, 0, 0);
         } else {
-          // Gentle belly slide
-          pilot.damage.fuselage = Math.max(0.15, pilot.damage.fuselage - 0.22);
-          pilot.damage.engine = Math.max(0.0, pilot.damage.engine - 0.4);
+          dm.fuselage = Math.max(0.15, dm.fuselage - 0.22);
+          dm.engine = Math.max(0.0, dm.engine - 0.4);
           const rolloutSpeed = Math.max(0, vel.length() - dt * 42.0);
           vel.copy(forward).multiplyScalar(rolloutSpeed);
-          if (rolloutSpeed * 3.6 < 5 && pilot.throttle < 0.1) vel.set(0, 0, 0);
+          if (rolloutSpeed * 3.6 < 5 && loco.throttle < 0.1) vel.set(0, 0, 0);
         }
       }
     }
@@ -516,22 +505,25 @@ export function updateFlightPhysics(
     vel.y = Math.min(0, vel.y);
   }
 
-  if (pilot.damage.hasFire) {
-    pilot.damage.fuelTank = Math.max(0, pilot.damage.fuelTank - dt * 0.04);
-    pilot.damage.fuselage = Math.max(0, pilot.damage.fuselage - dt * 0.03);
-    pilot.damage.engine = Math.max(0, pilot.damage.engine - dt * 0.02);
+  if (dm.hasFire) {
+    dm.fuelTank = Math.max(0, dm.fuelTank - dt * 0.04);
+    dm.fuselage = Math.max(0, dm.fuselage - dt * 0.03);
+    dm.engine = Math.max(0, dm.engine - dt * 0.02);
 
     if (speedKmph > 450 && Math.random() < 0.1 * dt) {
-      pilot.damage.hasFire = false;
+      dm.hasFire = false;
     }
   }
 
-  pilot.x = pos.x;
-  pilot.y = pos.y;
-  pilot.z = pos.z;
-  pilot.vx = vel.x;
-  pilot.vy = vel.y;
-  pilot.vz = vel.z;
+  // Keep DestructibleComponent dead-flag consistent with fuselage health
+  destr.isDead = dm.fuselage <= 0.05;
+
+  phys.x = pos.x;
+  phys.y = pos.y;
+  phys.z = pos.z;
+  phys.vx = vel.x;
+  phys.vy = vel.y;
+  phys.vz = vel.z;
 }
 
 /**
@@ -551,6 +543,7 @@ export function applyComponentDamage(
   hitSpot: Vector3
 ) {
   const zone = determineHitZone(hitSpot);
+  const dm = destructible(pilot.entity).damageModel!;
 
   const baseScale = 100 / pilot.specs.durability;
   const scaledDamageMultiplier = baseScale * 0.12;
@@ -558,46 +551,28 @@ export function applyComponentDamage(
 
   switch (zone) {
     case "engine":
-      pilot.damage.engine = Math.max(0, pilot.damage.engine - damageValue);
-      if (pilot.damage.engine < 0.4 && Math.random() < 0.2) {
-        pilot.damage.hasFire = true;
-      }
+      dm.engine = Math.max(0, dm.engine - damageValue);
+      if (dm.engine < 0.4 && Math.random() < 0.2) dm.hasFire = true;
       break;
-
     case "leftWing":
-      pilot.damage.leftWing = Math.max(0, pilot.damage.leftWing - damageValue);
+      dm.leftWing = Math.max(0, dm.leftWing - damageValue);
       break;
-
     case "rightWing":
-      pilot.damage.rightWing = Math.max(0, pilot.damage.rightWing - damageValue);
+      dm.rightWing = Math.max(0, dm.rightWing - damageValue);
       break;
-
     case "tail":
-      pilot.damage.tail = Math.max(0, pilot.damage.tail - damageValue * 0.9);
+      dm.tail = Math.max(0, dm.tail - damageValue * 0.9);
       break;
-
     case "cockpit":
-      pilot.damage.cockpit = Math.max(
-        0.1,
-        pilot.damage.cockpit - damageValue * 0.85
-      );
-      if (Math.random() < 0.05) {
-        pilot.damage.hasOilLeak = true;
-      }
+      dm.cockpit = Math.max(0.1, dm.cockpit - damageValue * 0.85);
+      if (Math.random() < 0.05) dm.hasOilLeak = true;
       break;
-
     case "fuelTank":
-      pilot.damage.fuelTank = Math.max(0, pilot.damage.fuelTank - damageValue);
-      if (pilot.damage.fuelTank < 0.5 && Math.random() < 0.18) {
-        pilot.damage.hasFire = true;
-      }
+      dm.fuelTank = Math.max(0, dm.fuelTank - damageValue);
+      if (dm.fuelTank < 0.5 && Math.random() < 0.18) dm.hasFire = true;
       break;
-
     default:
-      pilot.damage.fuselage = Math.max(
-        0,
-        pilot.damage.fuselage - damageValue * 0.7
-      );
+      dm.fuselage = Math.max(0, dm.fuselage - damageValue * 0.7);
       break;
   }
 }

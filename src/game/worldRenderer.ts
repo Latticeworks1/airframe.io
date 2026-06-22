@@ -286,6 +286,9 @@ export class WorldRenderer {
     const playerPilot = pilots.find((p) => p.id === playerPilotId);
     if (playerPilot) this.terrainBuilder.updateTiles(playerPilot.x, playerPilot.z);
     this.cloudField?.update(dt);
+    if (this.cloudField && this.scene.fog instanceof THREE.Fog) {
+      this.cloudField.updateFog(this.scene.fog.near, this.scene.fog.far);
+    }
     this.terrainBuilder.updateWater(dt);
 
     this.hudSyncManager.syncLeadHud(pilots, playerPilotId, this.aircraftRenderer.groupMap);

@@ -15,7 +15,7 @@ assert.ok(cockpit, "Falcon cockpit definition must exist");
 const convergenceM = falconMk2.hardpoints.gunConvergenceM;
 assert.ok(convergenceM, "Falcon gun convergence must be configured");
 
-const pilot = {
+const pilot = new Pilot({
   id: "convergence-test",
   name: "Test Pilot",
   isBot: false,
@@ -58,7 +58,7 @@ const pilot = {
   kills: 0,
   deaths: 0,
   xpEarned: 0,
-} satisfies Pilot;
+});
 
 const rotation = new Quaternion().setFromEuler(
   new Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")

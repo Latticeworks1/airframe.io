@@ -208,6 +208,8 @@ export class CloudField {
   private readonly noiseTexture: THREE.Data3DTexture;
   private readonly volumes: CloudVolume[] = [];
   private readonly uTime = uniform(0);
+  private readonly uFogNearRef: ReturnType<typeof uniform>;
+  private readonly uFogFarRef: ReturnType<typeof uniform>;
 
   constructor(def: MapDefinition) {
     const mapSeed = hashString(def.id);
@@ -288,6 +290,8 @@ export class CloudField {
     const uFogColor = uniform(new THREE.Color(atmosphere.fogColor)) as any;
     const uFogNear = uniform(cloudProfile.fogNear);
     const uFogFar = uniform(cloudProfile.fogFar);
+    this.uFogNearRef = uFogNear;
+    this.uFogFarRef = uFogFar;
     const uCoverage = uniform(
       THREE.MathUtils.clamp(def.cloudDensity, 0, 1)
     );
@@ -523,6 +527,11 @@ export class CloudField {
 
   public update(dt: number) {
     this.uTime.value += THREE.MathUtils.clamp(dt, 0, 0.05);
+  }
+
+  public updateFog(near: number, far: number) {
+    this.uFogNearRef.value = near;
+    this.uFogFarRef.value = far;
   }
 
   public sampleDensity(position: THREE.Vector3): number {

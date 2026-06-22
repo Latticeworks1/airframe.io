@@ -261,7 +261,7 @@ export class GameEngine {
       }
     }
 
-    const playerPilot: EnginePilot = {
+    const playerPilot: EnginePilot = new Pilot({
       id: "player",
       name: playerNickname ? `${playerNickname} (You)` : "You (Pilot-01)",
       isBot: false,
@@ -298,7 +298,7 @@ export class GameEngine {
       airbrakeDeployed: false,
       weaponCooldowns: {},
       invulnerableTimer: 1.5
-    };
+    }) as EnginePilot;
 
     this.pilots.push(playerPilot);
     this.playerPilotId = "player";
@@ -384,7 +384,7 @@ export class GameEngine {
     const bId = generateId();
     const { x, y, z, vx, vy, vz } = this.getAirSpawnPosition(team);
 
-    const pilot: EnginePilot = {
+    const pilot: EnginePilot = new Pilot({
       id: bId,
       name: nameOverride || BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)],
       isBot: true,
@@ -434,7 +434,7 @@ export class GameEngine {
           avoidance: 0.3 + Math.random() * 0.6
         }
       }
-    };
+    }) as EnginePilot;
 
     this.pilots.push(pilot);
   }
@@ -493,7 +493,7 @@ export class GameEngine {
     islandLocations.forEach((loc, index) => {
       const assignedTeam = index % 2 === 0 ? 1 : 2;
 
-      this.groundTargets.push({
+      this.groundTargets.push(new GroundTarget({
         id: `aa-${index}`,
         name: `FlaK AA Battery ${assignedTeam === 1 ? "A" : "B"}`,
         team: assignedTeam as 1 | 2,
@@ -505,9 +505,9 @@ export class GameEngine {
         maxHp: 120,
         isDead: false,
         fireCooldown: Math.random() * 2
-      });
+      }));
 
-      this.groundTargets.push({
+      this.groundTargets.push(new GroundTarget({
         id: `tgt-${index}`,
         name: assignedTeam === 1 ? "Red Radar Station" : "Blue Radar Station",
         team: assignedTeam as 1 | 2,
@@ -518,13 +518,13 @@ export class GameEngine {
         hp: 180,
         maxHp: 180,
         isDead: false
-      });
+      }));
     });
 
     if (this.matchMode === MatchMode.GroundStrike) {
       for (const team of [1, 2] as const) {
         for (let i = 0; i < 4; i++) {
-          this.groundTargets.push({
+          this.groundTargets.push(new GroundTarget({
             id: `convoy-t${team}-${i}`,
             name: `${team === 1 ? "Teammate" : "Adversary"} Convoy T${team} - #${i + 1}`,
             team,
@@ -535,7 +535,7 @@ export class GameEngine {
             hp: 80,
             maxHp: 80,
             isDead: false
-          });
+          }));
         }
       }
     }
