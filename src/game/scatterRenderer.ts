@@ -143,8 +143,8 @@ function buildRoadRibbons(
     color: 0x64748b,
     flatShading: false,
     polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
   }));
 }
 
