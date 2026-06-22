@@ -19,6 +19,7 @@ import {
   normalize,
   positionWorld,
   pow,
+  select,
   smoothstep,
   texture3D,
   uniform,
@@ -182,7 +183,14 @@ function createCloudNoiseTexture(seed: number) {
 }
 
 const hitUnitBox = Fn(([origin, direction]: [any, any]) => {
-  const inverseDirection = direction.reciprocal();
+  // Prevent division by zero when direction components are exactly 0.0,
+  // which causes slab intersections to yield -Infinity bounds.
+  const safeDirection = vec3(
+    select(direction.x.equal(0.0), float(1e-7), direction.x),
+    select(direction.y.equal(0.0), float(1e-7), direction.y),
+    select(direction.z.equal(0.0), float(1e-7), direction.z)
+  );
+  const inverseDirection = (safeDirection as any).reciprocal();
   const tMinTemporary = vec3(-0.5).sub(origin).mul(inverseDirection);
   const tMaxTemporary = vec3(0.5).sub(origin).mul(inverseDirection);
   const tMin = min(tMinTemporary, tMaxTemporary);
@@ -463,7 +471,9 @@ export class CloudField {
       accumulated.rgb.assign(
         mix(accumulated.rgb, uFogColor.mul(accumulated.a), fogFactor)
       );
-      accumulated.a.mulAssign(float(1).sub(fogFactor.mul(0.7)));
+      // Fully fade out the cloud opacity at fog.far (fogFactor = 1.0)
+      // to prevent harsh clipping boundaries at extreme viewing angles.
+      accumulated.a.mulAssign(float(1).sub(fogFactor.mul(1.0)));
 
       return accumulated;
     })();
