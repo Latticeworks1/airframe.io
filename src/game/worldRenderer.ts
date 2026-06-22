@@ -450,6 +450,7 @@ export class WorldRenderer {
     const playerPilot = pilots.find((p) => p.id === playerPilotId);
     if (playerPilot) this.terrainBuilder.updateTiles(playerPilot.x, playerPilot.z);
     this.cloudField?.update(dt);
+    this.terrainBuilder.updateWater(dt);
 
     let lockedAdv: Pilot | null = null;
     let bestDot = 0.94;
