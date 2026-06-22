@@ -476,6 +476,20 @@ export class CloudField {
     this.material.depthWrite = false;
     this.material.depthTest = true;
 
+    // Define large custom bounding volumes to prevent incorrect frustum culling.
+    // Since clouds are positioned in the vertex shader using a custom attribute
+    // while the mesh remains at the origin (0,0,0) with an identity matrix, the
+    // default 1x1x1 bounding volume would be culled when the origin is off-screen.
+    const customBoundsRadius = worldRadius * 2;
+    geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-customBoundsRadius, -customBoundsRadius, -customBoundsRadius),
+      new THREE.Vector3(customBoundsRadius, customBoundsRadius, customBoundsRadius)
+    );
+    geometry.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3(0, 0, 0),
+      customBoundsRadius
+    );
+
     this.mesh = new THREE.InstancedMesh(
       geometry,
       this.material as unknown as THREE.Material,
@@ -484,6 +498,11 @@ export class CloudField {
     this.mesh.name = "raymarched-cloud-field";
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 10;
+
+    this.mesh.boundingBox = geometry.boundingBox.clone();
+    this.mesh.boundingSphere = geometry.boundingSphere.clone();
+    this.mesh.computeBoundingBox = () => {};
+    this.mesh.computeBoundingSphere = () => {};
 
     const identity = new THREE.Matrix4();
     for (let index = 0; index < clusterCount; index++) {
