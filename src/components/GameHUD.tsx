@@ -20,6 +20,7 @@ import { BombSightOverlay } from "./hud/BombSightOverlay";
 import { TacticalMapOverlay } from "./hud/TacticalMapOverlay";
 import { LeadProjector } from "./hud/LeadProjector";
 import { ChatOverlay, ChatMessage } from "./hud/ChatOverlay";
+import { CockpitPanel } from "./hud/CockpitPanel";
 
 interface HUDProps {
   playerPilot: Pilot | undefined;
@@ -120,6 +121,7 @@ export const GameHUD: React.FC<HUDProps> = ({
       id="game-hud-layout"
       className="absolute inset-0 pointer-events-none select-none text-slate-100"
     >
+      {cameraMode === "first-person" && <CockpitPanel />}
       {cameraMode !== "bombsight" && <LeadProjector />}
       {cameraMode !== "bombsight" && <CenterReticle />}
       {cameraMode === "bombsight" && (

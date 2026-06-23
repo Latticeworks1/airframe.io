@@ -4,6 +4,7 @@ import { AIRCRAFT_DEFINITIONS } from "../content/aircraft/registry";
 import { getTerrainHeight } from "../terrainModel";
 import { getProjectileReleaseState } from "../projectileSystem";
 import { MapDefinition } from "../content/maps/mapTypes";
+import { cockpitPanelState } from "../cockpitPanelState";
 
 export class CameraManager {
   public camera: THREE.PerspectiveCamera;
@@ -97,6 +98,7 @@ export class CameraManager {
     }
 
     if (this.cameraMode === "bombsight") {
+      cockpitPanelState.active = false;
       if (this.cockpitLight) this.cockpitLight.intensity = 0;
       const ckEntry3 = cockpitStateMap.get(playerPilotId);
       if (ckEntry3) ckEntry3.group.visible = false;
@@ -140,17 +142,22 @@ export class CameraManager {
       if (ckEntry) {
         ckEntry.group.visible = true;
         const speed = Math.sqrt(playerPilot.vx ** 2 + playerPilot.vy ** 2 + playerPilot.vz ** 2);
-        const speedNorm = Math.min(speed / 600, 1.0);
-        const altNorm = Math.min(playerPilot.y / 14000, 1.0);
+        const alt01 = Math.min(playerPilot.y / 14000, 1.0);
         const euler = new THREE.Euler().setFromQuaternion(pGroup.quaternion, "YXZ");
-        const headingNorm = (((euler.y / (Math.PI * 2)) % 1) + 1) % 1;
-        ckEntry.updateLive(
-          speedNorm, altNorm, headingNorm, playerPilot.throttle, euler.x, euler.z,
-          playerPilot.gearDeployed,
-          playerPilot.flaps !== "up",
-          playerPilot.airbrakeDeployed,
-          playerPilot.damage.engine < 0.5
-        );
+        const heading01 = (((euler.y / (Math.PI * 2)) % 1) + 1) % 1;
+        const prevAlt = cockpitPanelState.alt01;
+        cockpitPanelState.active        = true;
+        cockpitPanelState.speed01       = Math.min(speed / 600, 1.0);
+        cockpitPanelState.vsi01         = THREE.MathUtils.clamp((alt01 - prevAlt) * 8, -1, 1);
+        cockpitPanelState.alt01         = alt01;
+        cockpitPanelState.heading01     = heading01;
+        cockpitPanelState.throttle01    = playerPilot.throttle;
+        cockpitPanelState.pitch_rad     = euler.x;
+        cockpitPanelState.roll_rad      = euler.z;
+        cockpitPanelState.gearDown      = playerPilot.gearDeployed;
+        cockpitPanelState.flapsOut      = playerPilot.flaps !== "up";
+        cockpitPanelState.airbrakeOn    = playerPilot.airbrakeDeployed;
+        cockpitPanelState.engineDamaged = playerPilot.damage.engine < 0.5;
       }
 
       const localRigidRot = pGroup.quaternion.clone();
@@ -166,6 +173,7 @@ export class CameraManager {
       this.camera.up.copy(rotatedUp);
       this.camera.lookAt(lookTarget);
     } else {
+      cockpitPanelState.active = false;
       if (this.cockpitLight) this.cockpitLight.intensity = 0;
       const ckEntry2 = cockpitStateMap.get(playerPilotId);
       if (ckEntry2) ckEntry2.group.visible = false;
@@ -239,13 +247,15 @@ export class CameraManager {
     const shakeY = Math.sin(t * 24.1 + 0.9) * Math.sin(t * 4.9);
 
     if (this.cameraMode === "first-person") {
-      const sightBuffet = Math.min(1.5, speedBuffet * 0.65 + stallBuffet);
-      this.reticleTurbulenceX = shakeX * sightBuffet * 1.15;
-      this.reticleTurbulenceY = shakeY * sightBuffet * 0.90;
+      // Reticle jitter is the sole expression of stall buffet in FPV — the cockpit interior
+      // stays visually stable, matching the physical reality that you ride with the airframe.
+      const sightBuffet = Math.min(1.0, speedBuffet * 0.35 + stallBuffet * 0.45);
+      this.reticleTurbulenceX = shakeX * sightBuffet * 0.28;
+      this.reticleTurbulenceY = shakeY * sightBuffet * 0.22;
     } else {
       this.reticleTurbulenceX = 0;
       this.reticleTurbulenceY = 0;
-      const shakeStrength = speedBuffet * 0.1;
+      const shakeStrength = speedBuffet * 0.1 + stallBuffet * 0.08;
       const dx = shakeX * shakeStrength;
       const dy = shakeY * shakeStrength;
       const shakeLocal = new THREE.Vector3(dx, dy, 0).applyQuaternion(pGroup.quaternion);
