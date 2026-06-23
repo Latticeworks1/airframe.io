@@ -494,6 +494,10 @@ export class GameEngine {
 
     islandLocations.forEach((loc, index) => {
       const assignedTeam = index % 2 === 0 ? 1 : 2;
+      const aaY = getTerrainHeight(loc.x, loc.z, this.selectedMapId).height;
+      const radarX = loc.x + 80;
+      const radarZ = loc.z + 80;
+      const radarY = getTerrainHeight(radarX, radarZ, this.selectedMapId).height;
 
       this.groundTargets.push(new GroundTarget({
         id: `aa-${index}`,
@@ -501,7 +505,7 @@ export class GameEngine {
         team: assignedTeam as 1 | 2,
         type: "anti-air",
         x: loc.x,
-        y: 45,
+        y: aaY,
         z: loc.z,
         hp: 120,
         maxHp: 120,
@@ -514,9 +518,9 @@ export class GameEngine {
         name: assignedTeam === 1 ? "Red Radar Station" : "Blue Radar Station",
         team: assignedTeam as 1 | 2,
         type: "radar",
-        x: loc.x + 80,
-        y: 40,
-        z: loc.z + 80,
+        x: radarX,
+        y: radarY,
+        z: radarZ,
         hp: 180,
         maxHp: 180,
         isDead: false
@@ -526,14 +530,16 @@ export class GameEngine {
     if (this.matchMode === MatchMode.GroundStrike) {
       for (const team of [1, 2] as const) {
         for (let i = 0; i < 4; i++) {
+          const cx = team === 1 ? -3000 + i * 150 : 3000 - i * 150;
+          const cz = team === 1 ? -1500 + i * 40 : 1500 - i * 40;
           this.groundTargets.push(new GroundTarget({
             id: `convoy-t${team}-${i}`,
             name: `${team === 1 ? "Teammate" : "Adversary"} Convoy T${team} - #${i + 1}`,
             team,
             type: "convoy",
-            x: team === 1 ? -3000 + i * 150 : 3000 - i * 150,
-            y: 12,
-            z: team === 1 ? -1500 + i * 40 : 1500 - i * 40,
+            x: cx,
+            y: getTerrainHeight(cx, cz, this.selectedMapId).height,
+            z: cz,
             hp: 80,
             maxHp: 80,
             isDead: false

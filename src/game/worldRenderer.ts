@@ -26,6 +26,7 @@ import { GroundTargetRenderer } from "./renderer/GroundTargetRenderer";
 import { SkyZoneRenderer } from "./renderer/SkyZoneRenderer";
 import { HudSyncManager } from "./renderer/HudSyncManager";
 import { AircraftRenderer } from "./renderer/AircraftRenderer";
+import { cockpitPanelState } from "./cockpitPanelState";
 
 export class WorldRenderer {
   public scene!: THREE.Scene;
@@ -282,6 +283,10 @@ export class WorldRenderer {
       this.aircraftRenderer.groupMap,
       this.aircraftRenderer.cockpitStateMap
     );
+
+    if (cockpitPanelState.active) {
+      this.aircraftRenderer.cockpitStateMap.get(playerPilotId)?.tickPanel();
+    }
 
     const playerPilot = pilots.find((p) => p.id === playerPilotId);
     if (playerPilot) this.terrainBuilder.updateTiles(playerPilot.x, playerPilot.z);

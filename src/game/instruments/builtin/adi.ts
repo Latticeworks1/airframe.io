@@ -1,5 +1,5 @@
 import type { Instrument, CockpitState } from "../types";
-import { clamp, stampBaked, type Ctx2D } from "../utils";
+import { clamp, stampBaked, glassOverlay, type Ctx2D } from "../utils";
 
 // Bakes the fixed bank graduation arc marks (clipped to the instrument face) and nothing else.
 // The bezel is drawn last inside draw() so it sits on top of all dynamic content.
@@ -111,8 +111,15 @@ export const adi: Instrument = {
     // Bezel drawn last so it covers the clipped edge cleanly
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.strokeStyle = "#3a4a5e";
-    ctx.lineWidth = r * 0.16;
+    ctx.strokeStyle = "#1a2230";
+    ctx.lineWidth = r * 0.14;
     ctx.stroke();
+    // Bevel highlight
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.96, Math.PI * 1.05, Math.PI * 1.95);
+    ctx.strokeStyle = "#4a5568";
+    ctx.lineWidth = r * 0.05;
+    ctx.stroke();
+    glassOverlay(ctx, cx, cy, r);
   },
 };

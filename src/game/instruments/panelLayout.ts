@@ -1,5 +1,7 @@
 // Panel canvas dimensions and slot positions.
-// To reposition a gauge or swap in a mod instrument, change the id or coordinates here.
+// The canvas is pre-mirrored horizontally in tickPanel() so that it cancels
+// the mirror introduced by the mesh's rotation.y = PI. Instrument contributors
+// write draw() and bake() in a standard coordinate system — the mirror is transparent.
 
 export const PANEL_W = 630;
 export const PANEL_H = 290;
@@ -9,8 +11,8 @@ const ROW2_Y = 205;
 const COL1_X = 97;
 const COL2_X = 315;
 const COL3_X = 533;
-const GR = 62;
-const AR = 72;
+const GR = 52;
+const AR = 60;
 
 export interface SlotConfig {
   id: string;

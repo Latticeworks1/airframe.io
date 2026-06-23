@@ -1,5 +1,5 @@
 import type { Instrument, CockpitState } from "../types";
-import { gaugeBase, gaugeLabel, stampBaked } from "../utils";
+import { gaugeBase, gaugeLabel, stampBaked, glassOverlay } from "../utils";
 
 const CARDINALS = ["N", "E", "S", "W"];
 
@@ -48,5 +48,6 @@ export const heading: Instrument = {
     ctx.lineWidth = 3;
     ctx.stroke();
     gaugeLabel(ctx, cx, cy, r, "HDG");
+    glassOverlay(ctx, cx, cy, r);
   },
 };
