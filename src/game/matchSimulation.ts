@@ -630,16 +630,23 @@ export class MatchSimulation {
         }
       });
 
-      this.updateProjectiles(step);
-      this.updateGroundDefense(step);
-      this.updateCaptureZones(step);
+      if (!this.isMultiplayer) {
+        // In multiplayer, projectiles, ground defense, capture zones,
+        // and end-of-match are all server-authoritative. Running them
+        // locally would score kills against the server-synced pilots
+        // (which start at origin before their first snapshot) and
+        // incorrectly trigger endGame on the client.
+        this.updateProjectiles(step);
+        this.updateGroundDefense(step);
+        this.updateCaptureZones(step);
+      }
 
       timeLeft -= step;
     }
 
     this.updateCampaignMission();
 
-    if (!this.campaignMission && (this.team1Score >= 1000 || this.team2Score >= 1000)) {
+    if (!this.isMultiplayer && !this.campaignMission && (this.team1Score >= 1000 || this.team2Score >= 1000)) {
       this.endGame();
     }
   }
