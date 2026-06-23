@@ -1,5 +1,6 @@
 import { MapDefinition, ProceduralTerrainDef, isProceduralTerrain } from "./content/maps/mapTypes";
 import { MAP_REGISTRY } from "./content/maps/registry";
+import { resolveCarriers } from "./content/structures/registry";
 
 // --- Heightmap support ---
 
@@ -250,7 +251,7 @@ export function getTerrainHeight(x: number, z: number, mapId: string): { height:
   const mapDef = MAP_REGISTRY[mapId];
   if (!mapDef) return { height: 10, isAirfield: false };
 
-  for (const carrier of mapDef.layout.carriers) {
+  for (const carrier of resolveCarriers(mapDef.layout.carriers)) {
     if (pointInsideRotatedBox2D(x, z, carrier.x, carrier.z, carrier.deckWidth, carrier.deckLength, carrier.rotationY)) {
       return { height: carrier.deckHeight, isAirfield: true };
     }

@@ -167,7 +167,19 @@ export class AircraftRenderer {
 
       const wingDmg = (pDm.leftWing + pDm.rightWing) / 2;
 
-      if (pDm.hasFire) {
+      if (pDm.fuselage <= 0) {
+        // Tumbling wreck — dense fire-and-black smoke column
+        if (Math.random() < 0.65) {
+          this.createSmokeTail(pPhys.x, pPhys.y, pPhys.z, 0xf97316, 1.8);
+          this.createSmokeTail(
+            pPhys.x - pPhys.vx * 0.06,
+            pPhys.y - pPhys.vy * 0.06,
+            pPhys.z - pPhys.vz * 0.06,
+            0x111827,
+            2.2
+          );
+        }
+      } else if (pDm.hasFire) {
         if (Math.random() < 0.4) {
           this.createSmokeTail(pPhys.x, pPhys.y, pPhys.z, 0xd97706, 1.2);
           this.createSmokeTail(

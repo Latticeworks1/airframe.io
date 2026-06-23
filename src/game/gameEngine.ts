@@ -29,6 +29,7 @@ import { GroundDefenseSystem } from "./groundDefenseSystem";
 import { ObjectiveSystem } from "./objectiveSystem";
 import { getTerrainHeight, getTerrainLayout } from "./terrainModel";
 import { MAP_REGISTRY } from "./content/maps/registry";
+import { resolveCarriers } from "./content/structures/registry";
 import { getCampaignMission } from "./content/campaign/campaignMissions";
 
 const BOT_NAMES = [
@@ -144,6 +145,7 @@ export class GameEngine {
 
   private onKillCallback: (event: KillEvent) => void;
   private onGameOverCallback: (victory: boolean, xp: number) => void;
+  public onMatchEnd?: (playerWon: boolean) => void;
 
   private controllers = new Map<string, AircraftController>();
 
@@ -213,7 +215,7 @@ export class GameEngine {
 
     if (startOnGround) {
       const mapDef = MAP_REGISTRY[this.selectedMapId];
-      const teamCarrier = mapDef?.layout.carriers[0];
+      const teamCarrier = mapDef ? resolveCarriers(mapDef.layout.carriers)[0] : undefined;
       if (teamCarrier) {
         const yaw = teamCarrier.rotationY;
         initialX = teamCarrier.x - Math.sin(yaw) * 120;
@@ -781,13 +783,19 @@ export class GameEngine {
       killer.kills++;
       killer.score += 300;
 
-      if (killerId === "player") {
+      // Non-host clients receive authoritative team scores via score_sync; skip local accumulation
+      // to avoid double-counting when kill_confirmed arrives out of order relative to scores_updated.
+      if (!this.isMultiplayer || this.isHost) {
+        if (killerId === "player") {
+          this.xpEarnedThisMatch += 150 + (weapon === WeaponType.ROCKET ? 100 : 0);
+          this.team1Score += 100;
+        } else if (killer.team === 1) {
+          this.team1Score += 100;
+        } else {
+          this.team2Score += 100;
+        }
+      } else if (killerId === "player") {
         this.xpEarnedThisMatch += 150 + (weapon === WeaponType.ROCKET ? 100 : 0);
-        this.team1Score += 100;
-      } else if (killer.team === 1) {
-        this.team1Score += 100;
-      } else {
-        this.team2Score += 100;
       }
     }
 
@@ -978,18 +986,20 @@ export class GameEngine {
     }
   }
 
-  private endGame(victoryOverride?: boolean) {
+  public forceEndGame(playerWon: boolean) {
+    if (this.matchEnded) return;
     this.matchEnded = true;
+    if (playerWon) this.xpEarnedThisMatch += 400;
+    this.onGameOverCallback(playerWon, this.xpEarnedThisMatch);
+  }
+
+  private endGame(victoryOverride?: boolean) {
     const playerWon = victoryOverride ?? (
       this.campaignMission
         ? this.campaignState?.completed === true
         : this.team1Score >= this.team2Score
     );
-
-    if (playerWon) {
-      this.xpEarnedThisMatch += 400;
-    }
-
-    this.onGameOverCallback(playerWon, this.xpEarnedThisMatch);
+    this.onMatchEnd?.(playerWon);
+    this.forceEndGame(playerWon);
   }
 }

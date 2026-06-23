@@ -152,7 +152,7 @@ export class CameraManager {
         cockpitPanelState.alt01         = alt01;
         cockpitPanelState.heading01     = heading01;
         cockpitPanelState.throttle01    = playerPilot.throttle;
-        cockpitPanelState.pitch_rad     = euler.x;
+        cockpitPanelState.pitch_rad     = -euler.x;
         cockpitPanelState.roll_rad      = euler.z;
         cockpitPanelState.gearDown      = playerPilot.gearDeployed;
         cockpitPanelState.flapsOut      = playerPilot.flaps !== "up";

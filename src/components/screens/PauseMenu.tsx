@@ -56,7 +56,7 @@ export function PauseMenu({
             ? "text-amber-300 font-black"
             : p.isBot
             ? "text-slate-500"
-            : "text-slate-200 font-bold";
+            : "text-yellow-200 font-bold";
           return (
             <div
               key={p.id}

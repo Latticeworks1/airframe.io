@@ -84,17 +84,8 @@ export function getAtmosphereSunDirection(
   return new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
 }
 
-export interface CarrierDef {
-  x: number;
-  z: number;
-  rotationY: number;
-  deckWidth: number;
-  deckLength: number;
-  deckHeight: number;
-}
-
 export interface MapLayoutDef {
-  carriers: CarrierDef[];
+  carriers: import("../structures/structureTypes").StructurePlacement[];
   hasThunder: boolean;
   antiAirCount: number;
   groundTargetsCount: number;

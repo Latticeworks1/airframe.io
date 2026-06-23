@@ -200,6 +200,14 @@ export function useMultiplayer() {
         } else if (msg.type === "scores_updated") {
           engine.team1Score = msg.team1Score;
           engine.team2Score = msg.team2Score;
+          if (typeof msg.matchTimer === "number" && !engine.isHost) {
+            engine.matchTimer = msg.matchTimer;
+          }
+        } else if (msg.type === "match_end") {
+          if (!engine.isHost) {
+            const playerWon = engine.team1Score >= engine.team2Score;
+            engine.forceEndGame(playerWon);
+          }
         } else if (msg.type === "chat_broadcast") {
           setChatMessages(prev => [
             ...prev.slice(-49),
@@ -409,6 +417,10 @@ export function useMultiplayer() {
             applyGameMsg(msg);
           }
 
+          else if (msg.type === "match_end") {
+            applyGameMsg(msg);
+          }
+
           else if (msg.type === "host_changed") {
             engine.isHost = msg.hostId === myPilotId;
           }
@@ -440,6 +452,25 @@ export function useMultiplayer() {
       };
 
       // Wire engine callbacks
+
+      engine.onMatchEnd = (playerWon) => {
+        const payload = JSON.stringify({
+          type: "match_end",
+          team1Score: engine.team1Score,
+          team2Score: engine.team2Score,
+          playerWon
+        });
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          socketRef.current.send(JSON.stringify({
+            type: "match_end",
+            team1Score: engine.team1Score,
+            team2Score: engine.team2Score
+          }));
+        }
+        dataChansRef.current.forEach(dc => {
+          if (dc.readyState === "open") dc.send(payload);
+        });
+      };
 
       engine.onProjectileSpawn = (weaponType) => {
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {

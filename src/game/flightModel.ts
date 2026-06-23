@@ -275,11 +275,7 @@ export function updateFlightPhysics(
   const finalYawRate = MathUtils.lerp(localAngularVelocity.y, directYawRate, 0.35);   // Yaw (local Y)
   const finalRollRate = MathUtils.lerp(localAngularVelocity.z, directRollRate, 0.35);  // Roll (local Z)
 
-  // 3. Inject realistic Stall Buffeting & Wing Drop instability
-  let stallBuffetRoll = 0;
-  let stallBuffetPitch = 0;
-  let stallBuffetYaw = 0;
-
+  // 3. Inject Stall Wing Drop instability and nose-heavy recovery moment
   if (isCurrentlyStalled) {
     loco.isStalling = true;
     loco.stallSeverity = MathUtils.clamp(
@@ -289,14 +285,6 @@ export function updateFlightPhysics(
       0.1,
       1.0
     );
-
-    // High frequency buffeting (structural shaking)
-    const shakeTime = Date.now() * 0.001;
-    const buffetFreq = 25.0; // 25 Hz structural flutter
-    const buffetAmp = loco.stallSeverity * 0.32;
-    stallBuffetRoll = Math.sin(shakeTime * (buffetFreq + 1.2)) * buffetAmp;       // Z axis
-    stallBuffetPitch = Math.cos(shakeTime * buffetFreq) * buffetAmp * 0.75;       // X axis
-    stallBuffetYaw = Math.sin(shakeTime * (buffetFreq - 4.0)) * buffetAmp * 0.22; // Y axis
 
     // Wing drop spins: when stalled, steering actions or minor slips flip the wing into an uncontrolled roll and deep dive
     if (airspeedKmph > 18) {
@@ -314,10 +302,9 @@ export function updateFlightPhysics(
     loco.stallSeverity = 0;
   }
 
-  // Combine integrated rates, inputs and buffeting components
-  const totalPitchRate = finalPitchRate + stallBuffetPitch; // Pitch is X
-  const totalYawRate = finalYawRate + stallBuffetYaw;       // Yaw is Y
-  const totalRollRate = finalRollRate + stallBuffetRoll;     // Roll is Z
+  const totalPitchRate = finalPitchRate;
+  const totalYawRate   = finalYawRate;
+  const totalRollRate  = finalRollRate;
 
   // 4. One-Shot Quaternion Integration to perfectly evolve attitude without Euler locks
   const qCurrent = getAircraftQuaternion(phys.pitch, phys.yaw, phys.roll);
