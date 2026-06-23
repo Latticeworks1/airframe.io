@@ -24,9 +24,9 @@ export async function loadHeightmap(
   if (typeof window === "undefined") {
     // Node environment
     try {
-      const fs = await import("fs");
-      const path = await import("path");
-      const sharp = (await import("sharp")).default;
+      const fs = await import(/* @vite-ignore */ "fs");
+      const path = await import(/* @vite-ignore */ "path");
+      const sharp = (await import(/* @vite-ignore */ "sharp") as any).default;
 
       const cleanPath = pathStr.startsWith("/") ? pathStr.slice(1) : pathStr;
       const fullPath = path.join(process.cwd(), "public", cleanPath);
