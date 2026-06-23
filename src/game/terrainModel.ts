@@ -31,28 +31,31 @@ export async function loadHeightmap(
       const cleanPath = pathStr.startsWith("/") ? pathStr.slice(1) : pathStr;
       const fullPath = path.join(process.cwd(), "public", cleanPath);
 
-      if (fs.existsSync(fullPath)) {
-        const fileBuffer = fs.readFileSync(fullPath);
-        const { data, info } = await sharp(fileBuffer).raw().toBuffer({ resolveWithObject: true });
-        
-        const channels = info.channels;
-        const buf = new Float32Array(info.width * info.height);
-        for (let i = 0; i < buf.length; i++) {
-          buf[i] = data[i * channels] / 255;
-        }
-
-        const heightmapData: HeightmapData = {
-          buffer: buf,
-          width: info.width,
-          height: info.height,
-          worldRadius,
-          elevationScale
-        };
-        heightmapCache.set(pathStr, heightmapData);
-        return heightmapData;
+      if (!fs.existsSync(fullPath)) {
+        throw new Error(`File not found: ${fullPath}`);
       }
+
+      const fileBuffer = fs.readFileSync(fullPath);
+      const { data, info } = await sharp(fileBuffer).raw().toBuffer({ resolveWithObject: true });
+      
+      const channels = info.channels;
+      const buf = new Float32Array(info.width * info.height);
+      for (let i = 0; i < buf.length; i++) {
+        buf[i] = data[i * channels] / 255;
+      }
+
+      const heightmapData: HeightmapData = {
+        buffer: buf,
+        width: info.width,
+        height: info.height,
+        worldRadius,
+        elevationScale
+      };
+      heightmapCache.set(pathStr, heightmapData);
+      return heightmapData;
     } catch (err) {
       console.error(`Failed to load heightmap headlessly for ${pathStr}:`, err);
+      throw err;
     }
   }
 
