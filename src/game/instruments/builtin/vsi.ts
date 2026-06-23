@@ -1,5 +1,5 @@
 import type { Instrument, CockpitState } from "../types";
-import { gaugeBase, tickRing, gaugeLabel, needle, stampBaked } from "../utils";
+import { gaugeBase, tickRing, gaugeLabel, needle, stampBaked, glassOverlay } from "../utils";
 
 export const vsi: Instrument = {
   id: "vsi",
@@ -24,5 +24,6 @@ export const vsi: Instrument = {
     stampBaked(ctx, cx, cy, r, baked);
     const a = -Math.PI - state.vsi01 * (Math.PI * 0.75);
     needle(ctx, cx, cy, r, a + Math.PI / 2, 0.78);
+    glassOverlay(ctx, cx, cy, r);
   },
 };

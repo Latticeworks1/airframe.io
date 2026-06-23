@@ -1,5 +1,5 @@
 import type { Instrument, CockpitState } from "../types";
-import { gaugeBase, gaugeLabel, stampBaked, clamp } from "../utils";
+import { gaugeBase, gaugeLabel, stampBaked, clamp, glassOverlay } from "../utils";
 
 export const turnCoordinator: Instrument = {
   id: "turn-coordinator",
@@ -47,5 +47,6 @@ export const turnCoordinator: Instrument = {
     ctx.arc(cx, cy + r * 0.62, r * 0.09, 0, Math.PI * 2);
     ctx.fillStyle = "#FAE5AD";
     ctx.fill();
+    glassOverlay(ctx, cx, cy, r);
   },
 };

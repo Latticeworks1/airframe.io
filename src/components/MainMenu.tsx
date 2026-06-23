@@ -470,7 +470,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
           {/* Navigation Tabs */}
           <nav className="flex items-center gap-1">
-            {Object.values(HangarTab).map((tab) => {
+            {Object.values(HangarTab).filter(tab => tab !== HangarTab.Campaign).map((tab) => {
               const isSelected = activeTab === tab;
               return (
                 <button

@@ -1,5 +1,5 @@
 import type { Instrument, CockpitState } from "../types";
-import { gaugeBase, tickRing, gaugeLabel, needle, stampBaked } from "../utils";
+import { gaugeBase, tickRing, gaugeLabel, needle, stampBaked, glassOverlay } from "../utils";
 
 export const altimeter: Instrument = {
   id: "altimeter",
@@ -19,5 +19,6 @@ export const altimeter: Instrument = {
     const altFt = state.alt01 * 14000;
     needle(ctx, cx, cy, r, ((altFt % 10000) / 10000) * Math.PI * 2, 0.56, "#c8c8c8", 3);
     needle(ctx, cx, cy, r, ((altFt % 1000)  / 1000)  * Math.PI * 2, 0.80, "#FAE5AD", 2);
+    glassOverlay(ctx, cx, cy, r);
   },
 };

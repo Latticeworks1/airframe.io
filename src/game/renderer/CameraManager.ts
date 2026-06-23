@@ -145,7 +145,8 @@ export class CameraManager {
         const alt01 = Math.min(playerPilot.y / 14000, 1.0);
         const euler = new THREE.Euler().setFromQuaternion(pGroup.quaternion, "YXZ");
         const heading01 = (((euler.y / (Math.PI * 2)) % 1) + 1) % 1;
-        const prevAlt = cockpitPanelState.alt01;
+        const wasActive = cockpitPanelState.active;
+        const prevAlt = wasActive ? cockpitPanelState.alt01 : alt01;
         cockpitPanelState.active        = true;
         cockpitPanelState.speed01       = Math.min(speed / 600, 1.0);
         cockpitPanelState.vsi01         = THREE.MathUtils.clamp((alt01 - prevAlt) * 8, -1, 1);

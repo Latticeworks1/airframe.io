@@ -1,5 +1,5 @@
 import type { Instrument, CockpitState } from "../types";
-import { gaugeBase, tickRing, gaugeLabel, needle, stampBaked } from "../utils";
+import { gaugeBase, tickRing, gaugeLabel, needle, stampBaked, glassOverlay } from "../utils";
 
 const START = (225 / 180) * Math.PI;
 const SWEEP = (270 / 180) * Math.PI;
@@ -33,5 +33,6 @@ export const asi: Instrument = {
   draw(ctx, cx, cy, r, state: CockpitState, baked) {
     stampBaked(ctx, cx, cy, r, baked);
     needle(ctx, cx, cy, r, START + state.speed01 * SWEEP);
+    glassOverlay(ctx, cx, cy, r);
   },
 };

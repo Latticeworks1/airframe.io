@@ -5,7 +5,7 @@
 export type { Instrument, CockpitState } from "./types";
 export { registerInstrument, getInstrument, getAllInstruments } from "./registry";
 export { PANEL_LAYOUT, PANEL_W, PANEL_H } from "./panelLayout";
-export { gaugeBase, needle, tickRing, gaugeLabel, stampBaked, clamp } from "./utils";
+export { gaugeBase, needle, tickRing, gaugeLabel, stampBaked, clamp, glassOverlay } from "./utils";
 
 import { registerInstrument } from "./registry";
 import { asi }              from "./builtin/asi";

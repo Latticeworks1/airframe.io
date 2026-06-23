@@ -6,10 +6,12 @@ import stickJson          from "./content/cockpit/stick.json";
 import throttleSingleJson from "./content/cockpit/throttle-single.json";
 import throttleTwinJson   from "./content/cockpit/throttle-twin.json";
 import bombsightJson      from "./content/cockpit/bombsight.json";
+import { cockpitPanelState } from "./cockpitPanelState";
+import { getInstrument, PANEL_LAYOUT, PANEL_W, PANEL_H } from "./instruments/index";
+import "./instruments/index"; // register builtins
 
-// Cockpit interior: merged structural shell + gunsight glass.
-// The instrument panel face is a DOM canvas overlay (CockpitPanel.tsx).
-// Total draw calls: 2 (structure, glass).
+// Cockpit interior: merged structural shell + gunsight glass + canvas-texture instrument panel.
+// Total draw calls: 3 (structure, glass, panel).
 
 export interface CockpitDef {
   eye: [number, number, number];
@@ -25,6 +27,7 @@ export interface CockpitState {
   group: THREE.Group;
   eyeLocal: THREE.Vector3;
   sightAnchorLocal: THREE.Vector3;
+  tickPanel(): void;
   dispose(): void;
 }
 
@@ -423,18 +426,103 @@ export function buildCockpitMesh(def: CockpitDef): CockpitState {
   group.add(quadMesh(cFrontC, wTopL, wBotL, wBotC, canopyGlassMat));
   group.add(quadMesh(cFrontC, wBotC, wBotR, wTopR, canopyGlassMat));
 
+  // ── Instrument panel canvas texture ─────────────────────────────────────────
+  const panelCanvas = document.createElement("canvas");
+  panelCanvas.width  = PANEL_W;
+  panelCanvas.height = PANEL_H;
+  const panelCtx = panelCanvas.getContext("2d")!;
+
+  const bakedMap = new Map<string, OffscreenCanvas>();
+  for (const slot of PANEL_LAYOUT) {
+    const inst = getInstrument(slot.id);
+    if (inst) bakedMap.set(slot.id, inst.bake(slot.r));
+  }
+
+  const panelTexture = new THREE.CanvasTexture(panelCanvas);
+  panelTexture.minFilter = THREE.LinearFilter;
+  panelTexture.magFilter = THREE.LinearFilter;
+  panelTexture.generateMipmaps = false;
+
+  const panelGeo = new THREE.PlaneGeometry(def.panelW, def.panelH);
+  const panelMat = new THREE.MeshBasicMaterial({ map: panelTexture });
+  const panelMesh = new THREE.Mesh(panelGeo, panelMat);
+  panelMesh.position.set(0, def.panelY + 0.0125, def.panelZ - 0.003);
+  panelMesh.rotation.y = Math.PI;
+  group.add(panelMesh);
+
+  const IND_Y  = PANEL_H - 14;
+  const IND_H  = 24;
+  const IND_W  = 84;
+  const INDICATORS = [
+    { cx: 97,  label: "GEAR",   key: "gearDown"      as const, color: "#22c55e" },
+    { cx: 257, label: "FLAPS",  key: "flapsOut"      as const, color: "#eab308" },
+    { cx: 373, label: "AIRBRK", key: "airbrakeOn"    as const, color: "#ef4444" },
+    { cx: 533, label: "ENG",    key: "engineDamaged" as const, color: "#ef4444" },
+  ];
+
+  function tickPanel() {
+    const s = cockpitPanelState;
+    const ctx = panelCtx;
+
+    // The panel mesh uses rotation.y = PI which horizontally mirrors the texture.
+    // Pre-mirroring the canvas here cancels that flip so instrument draw() methods
+    // can use a normal coordinate system without any awareness of the 3D setup.
+    ctx.save();
+    ctx.translate(PANEL_W, 0);
+    ctx.scale(-1, 1);
+
+    const bg = ctx.createLinearGradient(0, 0, 0, PANEL_H);
+    bg.addColorStop(0, "#0c1827");
+    bg.addColorStop(1, "#060c14");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, PANEL_W, PANEL_H);
+
+    for (const slot of PANEL_LAYOUT) {
+      const inst = getInstrument(slot.id);
+      const baked = bakedMap.get(slot.id);
+      if (inst && baked) inst.draw(ctx, slot.cx, slot.cy, slot.r, s, baked);
+    }
+
+    for (const ind of INDICATORS) {
+      const lit = !!s[ind.key];
+      ctx.fillStyle = lit ? ind.color : "#091320";
+      ctx.fillRect(ind.cx - IND_W / 2, IND_Y - IND_H / 2, IND_W, IND_H);
+      ctx.strokeStyle = lit ? ind.color : "#162436";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(ind.cx - IND_W / 2 + 2, IND_Y - IND_H / 2 + 2, IND_W - 4, IND_H - 4);
+      ctx.fillStyle = lit ? "#ffffff" : "#1e3048";
+      ctx.font = `bold ${Math.round(IND_H * 0.46)}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(ind.label, ind.cx, IND_Y);
+    }
+
+    ctx.strokeStyle = "#1e3a5c";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, PANEL_W - 2, PANEL_H - 2);
+
+    ctx.restore();
+    // Force the GPU-accelerated 2D pipeline to commit before WebGL reads the canvas.
+    panelCtx.getImageData(0, 0, 1, 1);
+    panelTexture.needsUpdate = true;
+  }
+
   group.visible = false;
 
   return {
     group,
     eyeLocal: new THREE.Vector3(...def.eye),
     sightAnchorLocal,
+    tickPanel,
     dispose() {
       merged.dispose();
       structMat.dispose();
       glassGeo.dispose();
       glassMat.dispose();
       canopyGlassMat.dispose();
+      panelTexture.dispose();
+      panelMat.dispose();
+      panelGeo.dispose();
     },
   };
 }
