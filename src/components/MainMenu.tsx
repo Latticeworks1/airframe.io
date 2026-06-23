@@ -26,6 +26,7 @@ import {
   Wrench
 } from "lucide-react";
 import { PlanePreview3D } from "./PlanePreview3D";
+import { getMultiplayerSessionId } from "../hooks/useProgression";
 
 interface MainMenuProps {
   progression: UserProgression;
@@ -90,7 +91,8 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   useEffect(() => {
     const pollHealth = async () => {
       try {
-        const r = await fetch("/api/health");
+        const t = getMultiplayerSessionId();
+        const r = await fetch(`/api/health?t=${encodeURIComponent(t)}`);
         if (r.ok) {
           const d = await r.json();
           setLiveCounts({ total: d.totalPlayers ?? 0, byQueue: d.byQueue ?? {} });

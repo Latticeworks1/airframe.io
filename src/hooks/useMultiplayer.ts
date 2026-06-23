@@ -43,6 +43,10 @@ export function useMultiplayer() {
       engine.isMultiplayer = true;
       engine.isHost = false;
 
+      // Discard locally-spawned bots — the server is authoritative and will
+      // deliver the real roster via Colyseus state sync (onAdd).
+      engine.pilots = engine.pilots.filter(p => p.id === "player");
+
       const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
       const client = new Client(`${protocol}${window.location.host}`);
 

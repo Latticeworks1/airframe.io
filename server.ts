@@ -51,17 +51,27 @@ async function startServer() {
     }
   });
 
+  // Lobby presence: token -> last-seen timestamp. Entries expire after 15s.
+  const lobbyPresence = new Map<string, number>();
+
   app.get("/api/presence", (req, res) => res.json({ ok: true }));
   app.get("/api/ice-servers", (req, res) => res.json([{ urls: "stun:stun.l.google.com:19302" }]));
 
   app.get("/api/health", async (req, res) => {
+    const token = (req.query.t as string) || req.ip || "anon";
+    const now = Date.now();
+    lobbyPresence.set(token, now);
+    const cutoff = now - 15000;
+    for (const [k, v] of lobbyPresence) if (v < cutoff) lobbyPresence.delete(k);
+
     try {
       const rooms = await matchMaker.query({ name: "air_combat" });
-      let totalPlayers = 0;
-      rooms.forEach((r) => totalPlayers += r.clients);
+      let roomPlayers = 0;
+      rooms.forEach((r) => roomPlayers += r.clients);
+      const totalPlayers = roomPlayers + lobbyPresence.size;
       res.json({ status: "ok", totalPlayers, byQueue: {} });
     } catch {
-      res.json({ status: "ok", totalPlayers: 0, byQueue: {} });
+      res.json({ status: "ok", totalPlayers: lobbyPresence.size, byQueue: {} });
     }
   });
 
