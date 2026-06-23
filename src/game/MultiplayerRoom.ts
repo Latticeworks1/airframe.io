@@ -836,15 +836,16 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
     if (bots.length > 0) {
       const [botId] = bots[0];
       this.cleanupPlayer(botId);
+      this.state.players.delete(botId);
     }
   }
 
   private fillWithBots() {
-    const half = 16;
-    for (let i = 0; i < half; i++) {
+    const botsPerTeam = 4;
+    for (let i = 0; i < botsPerTeam; i++) {
       this.spawnBot(1, DEFAULT_AIRCRAFT[Math.floor(Math.random() * DEFAULT_AIRCRAFT.length)]);
     }
-    for (let i = 0; i < half; i++) {
+    for (let i = 0; i < botsPerTeam; i++) {
       this.spawnBot(2, DEFAULT_AIRCRAFT[Math.floor(Math.random() * DEFAULT_AIRCRAFT.length)]);
     }
   }
