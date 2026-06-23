@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { LeadIndicatorInfo, Pilot, WeaponType } from "../../types";
 import { AIRCRAFT_DEFINITIONS } from "../content/aircraft/registry";
+import { getCockpitDef } from "../content/aircraft/cockpitRegistry";
+import { solveGunConvergenceLocal } from "../weaponConvergence";
 import { WEAPON_SPECS_MAP } from "../content/weapons/weaponData";
 
 export class HudSyncManager {
@@ -160,10 +162,20 @@ export class HudSyncManager {
         ? AIRCRAFT_DEFINITIONS.find(d => d.specs.id === aircraftId)
         : undefined;
       const convergenceM = acDef?.hardpoints.gunConvergenceM ?? 250;
-      const forward = new THREE.Vector3(0, 0, 1)
-        .applyQuaternion(pGroup.quaternion)
-        .normalize();
-      reticleWorldPos = pGroup.position.clone().addScaledVector(forward, convergenceM);
+      const cockpitDef = aircraftId ? getCockpitDef(aircraftId) : undefined;
+      if (cockpitDef) {
+        const targetLocal = solveGunConvergenceLocal(
+          new THREE.Vector3(...cockpitDef.eye),
+          cockpitDef,
+          convergenceM
+        ).targetLocal;
+        reticleWorldPos = targetLocal.applyQuaternion(pGroup.quaternion).add(pGroup.position);
+      } else {
+        const forward = new THREE.Vector3(0, 0, 1)
+          .applyQuaternion(pGroup.quaternion)
+          .normalize();
+        reticleWorldPos = pGroup.position.clone().addScaledVector(forward, convergenceM);
+      }
     }
     const projected = reticleWorldPos.project(this.camera);
 
