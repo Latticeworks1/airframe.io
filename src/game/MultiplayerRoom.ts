@@ -187,6 +187,10 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
     }
   }
 
+  onUncaughtException(error: Error, methodName: string) {
+    console.error(`[Room ${this.roomId}] Uncaught exception in ${methodName}:`, error);
+  }
+
   onJoin(client: Client, options: any) {
     const authData = client.auth;
     const assignedTeam = this.balanceTeams();
@@ -280,16 +284,17 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
     console.log(`[Room ${this.roomId}] Player ${player.name} joined team ${assignedTeam}`);
   }
 
-  onLeave(client: Client) {
+  onLeave(client: Client, code?: number) {
     const player = this.pilots.get(client.sessionId);
+    console.log(`[Room ${this.roomId}] onLeave called for ${client.sessionId} code=${code} known=${!!player}`);
     if (player) {
       const team = player.team;
       this.cleanupPlayer(client.sessionId);
       this.state.players.delete(client.sessionId);
-      
+
       // Respawn a bot to fill the empty slot
       this.spawnBot(team, DEFAULT_AIRCRAFT[Math.floor(Math.random() * DEFAULT_AIRCRAFT.length)]);
-      
+
       this.broadcast("player_left", { id: client.sessionId, team });
       console.log(`[Room ${this.roomId}] Player ${player.name} left. Spawned replacement bot.`);
     }
