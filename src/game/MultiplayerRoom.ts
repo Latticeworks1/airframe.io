@@ -254,17 +254,16 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
     }
 
     // Add to Colyseus MapSchema
-    const netPlayer = new NetworkPlayer({
-      id: client.sessionId,
-      name: player.name,
-      team: assignedTeam,
-      aircraftId: planeId,
-      skin,
-      score: 0,
-      kills: 0,
-      deaths: 0,
-      isBot: false
-    });
+    const netPlayer = new NetworkPlayer();
+    netPlayer.id = client.sessionId;
+    netPlayer.name = player.name;
+    netPlayer.team = assignedTeam;
+    netPlayer.aircraftId = planeId;
+    netPlayer.skin = skin;
+    netPlayer.score = 0;
+    netPlayer.kills = 0;
+    netPlayer.deaths = 0;
+    netPlayer.isBot = false;
     this.state.players.set(client.sessionId, netPlayer);
 
     // Send welcome / join confirmation
@@ -905,15 +904,16 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
     }
 
     // Add to Colyseus schema
-    const netBot = new NetworkPlayer({
-      id: botId,
-      name: bot.name,
-      team,
-      aircraftId: specs.id,
-      skin: "default",
-      score: 0, kills: 0, deaths: 0,
-      isBot: true
-    });
+    const netBot = new NetworkPlayer();
+    netBot.id = botId;
+    netBot.name = bot.name;
+    netBot.team = team;
+    netBot.aircraftId = specs.id;
+    netBot.skin = "default";
+    netBot.score = 0;
+    netBot.kills = 0;
+    netBot.deaths = 0;
+    netBot.isBot = true;
     this.state.players.set(botId, netBot);
   }
 
