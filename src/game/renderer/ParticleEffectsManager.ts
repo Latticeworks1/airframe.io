@@ -388,6 +388,13 @@ export class ParticleEffectsManager {
         this.rocketInstMesh.setMatrixAt(ri, this._projDummy.matrix);
         this.rocketInstMesh.setColorAt(ri, this._projColor);
         ri++;
+        // Exhaust smoke emitted every ~3 frames at the rocket tail
+        if (Math.random() < 0.33 && hasVel) {
+          const tailX = p.x - this._velDir.x * 2.5;
+          const tailY = p.y - this._velDir.y * 2.5;
+          const tailZ = p.z - this._velDir.z * 2.5;
+          this.createSmokeTail(tailX, tailY, tailZ, 0xb0b8c8, 0.55);
+        }
       } else if (!entry.isRocket && bi < 2000) {
         this.bulletInstMesh.setMatrixAt(bi, this._projDummy.matrix);
         this.bulletInstMesh.setColorAt(bi, this._projColor);

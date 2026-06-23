@@ -10,8 +10,8 @@ export const map: MapDefinition = {
   spawn:    { distMin: 20000, distMax: 26000, aglMin: 500, aglMax: 1200, initialSpeedMs: 145, spreadZ: 6000 },
   terrain:  { kind: "heightmap" as const, path: "/maps/island-chain.png", elevationScale: 700 },
   layout:   { carriers: [
-    { x: -20000, z: -14000, rotationY: Math.PI / 4,      deckWidth: 76, deckLength: 395, deckHeight: 25.2 },
-    { x:  20000, z:  14000, rotationY: -3 * Math.PI / 4, deckWidth: 76, deckLength: 395, deckHeight: 25.2 },
+    { structureId: "carrier-nimitz", x: -20000, z: -14000, rotationY: Math.PI / 4 },
+    { structureId: "carrier-nimitz", x:  20000, z:  14000, rotationY: -3 * Math.PI / 4 },
   ], hasThunder: false, antiAirCount: 20, groundTargetsCount: 32 },
   visual:   { skyColor: "#38bdf8", fogColor: "#e0f2fe", groundColor: "#0284c7" },
   palette:  { base: "#14532d", colors: ["#1b5e20","#14532d","#2e7d32","#15803d","#22c55e","#4caf50","#4ade80","#854d0e","#a16207","#ca8a04"], roadColor: "rgba(241, 245, 249, 0.25)" },

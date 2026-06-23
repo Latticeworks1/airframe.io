@@ -10,8 +10,8 @@ export const map: MapDefinition = {
   spawn:    { distMin: 10000, distMax: 13000, aglMin: 400,  aglMax: 900,  initialSpeedMs: 135, spreadZ: 1000 },
   terrain:  { kind: "heightmap" as const, path: "/maps/storm-front.png", elevationScale: 700 },
   layout:   { carriers: [
-    { x: -12000, z: -9000, rotationY: Math.PI / 4,      deckWidth: 76, deckLength: 395, deckHeight: 25.2 },
-    { x:  12000, z:  9000, rotationY: -3 * Math.PI / 4, deckWidth: 76, deckLength: 395, deckHeight: 25.2 },
+    { structureId: "carrier-nimitz", x: -12000, z: -9000, rotationY: Math.PI / 4 },
+    { structureId: "carrier-nimitz", x:  12000, z:  9000, rotationY: -3 * Math.PI / 4 },
   ], hasThunder: true,  antiAirCount: 16, groundTargetsCount: 20 },
   visual:   { skyColor: "#1e293b", fogColor: "#334155", groundColor: "#0f172a" },
   palette:  { base: "#14532d", colors: ["#1b5e20","#14532d","#2e7d32","#15803d","#22c55e","#4caf50","#4ade80","#854d0e","#a16207","#ca8a04"], roadColor: "rgba(241, 245, 249, 0.25)" },

@@ -390,7 +390,8 @@ async function startServer() {
           const payload = JSON.stringify({
             type: "scores_updated",
             team1Score: data.team1Score,
-            team2Score: data.team2Score
+            team2Score: data.team2Score,
+            matchTimer: data.matchTimer
           });
 
           room.sockets.forEach((s, id) => {
@@ -426,6 +427,16 @@ async function startServer() {
           if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
             targetSocket.send(JSON.stringify({ ...data, fromId: currentPilotId }));
           }
+        }
+
+        else if (data.type === "match_end") {
+          if (!currentRoomId) return;
+          const room = rooms.get(currentRoomId);
+          if (!room || room.hostId !== currentPilotId) return;
+          const payload = JSON.stringify({ type: "match_end", team1Score: data.team1Score, team2Score: data.team2Score });
+          room.sockets.forEach((s, id) => {
+            if (id !== currentPilotId && s.readyState === WebSocket.OPEN) s.send(payload);
+          });
         }
 
         else if (data.type === "pong") {

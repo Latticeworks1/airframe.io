@@ -578,7 +578,8 @@ export default function App() {
           const scorePayload = JSON.stringify({
             type: "scores_updated",
             team1Score: engine.team1Score,
-            team2Score: engine.team2Score
+            team2Score: engine.team2Score,
+            matchTimer: Math.round(engine.matchTimer * 10) / 10
           });
 
           if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -586,7 +587,8 @@ export default function App() {
             socketRef.current.send(JSON.stringify({
               type: "score_sync",
               team1Score: engine.team1Score,
-              team2Score: engine.team2Score
+              team2Score: engine.team2Score,
+              matchTimer: Math.round(engine.matchTimer * 10) / 10
             }));
           }
 

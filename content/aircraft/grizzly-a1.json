@@ -1,0 +1,153 @@
+{
+  "id": "grizzly-a1",
+  "name": "Grizzly A1",
+  "class": "Attacker",
+  "description": "Heavy armored fortress. Features a 30mm auto-cannon, high rocket count, and bombs in standard payloads. Excels at erasing ground structures.",
+  "mass": 5900,
+  "maxThrust": 34000,
+  "cd0": 0.038,
+  "cl0": 0.22,
+  "clAlpha": 0.082,
+  "wingArea": 30.5,
+  "aspectRatio": 5.6,
+  "oswaldEfficiency": 0.74,
+  "energyRetention": 0.92,
+  "stallSpeedKmph": 160,
+  "structuralLimitSpeedKmph": 680,
+  "turnBleed": 0.18,
+  "climbRate": 10,
+  "maxFuelSeconds": 420,
+  "weapons": ["30mm Cannon", "Rockets", "Small Bombs"],
+  "durability": 200,
+  "color": "#15803d",
+  "secondaryColor": "#eab308",
+  "accentColor": "#4b5563",
+  "aero": {
+    "leftWingPos":     { "x": -3.8, "y": -0.1, "z": 0.4 },
+    "rightWingPos":    { "x":  3.8, "y": -0.1, "z": 0.4 },
+    "leftAileronPos":  { "x": -7.0, "y": 0.05, "z": -0.2 },
+    "rightAileronPos": { "x":  7.0, "y": 0.05, "z": -0.2 },
+    "elevatorPos":     { "x": 0,    "y": 0.15, "z": -5.4 },
+    "rudderPos":       { "x": 0,    "y": 1.2,  "z": -5.1 }
+  },
+  "damage": {
+    "engineVolume":   { "min": [-0.75, -0.75, -6.0], "max": [0.75, 0.75, -3.0] },
+    "cockpitVolume":  { "min": [-0.8, 0.55, -0.2],   "max": [0.8, 1.7, 2.5] },
+    "fuelTankVolume": { "min": [-1.0, -0.8, -2.8],   "max": [1.0, 0.6, -0.5] }
+  },
+  "hardpoints": {
+    "gunConvergenceM": 400,
+    "positions": [
+      { "x": 0,    "y": -0.65, "z": 7.4 },
+      { "x": -5.0, "y": -0.55, "z": 1.55 },
+      { "x":  5.0, "y": -0.55, "z": 1.55 }
+    ],
+    "rocketPositions": [
+      { "x": -5.0, "y": -0.75, "z": 1.55 },
+      { "x":  5.0, "y": -0.75, "z": 1.55 }
+    ],
+    "bombPositions": [
+      { "x": -2.45, "y": -0.95, "z":  1.45 },
+      { "x":  2.45, "y": -0.95, "z":  1.45 },
+      { "x": -2.45, "y": -0.95, "z": -1.15 },
+      { "x":  2.45, "y": -0.95, "z": -1.15 }
+    ]
+  },
+  "render": {
+    "materials": {
+      "primary":   "#4B5563",
+      "secondary": "#DC2626",
+      "accent":    "#FBBF24",
+      "canopy":    "#0EA5E9",
+      "metal":     "#64748B",
+      "bomb":      "#3F3F32",
+      "bombBand":  "#D6A11D"
+    },
+    "camera": {
+      "cockpitEye": [0, 1.38, 0.95],
+      "firstPersonFov": 72,
+      "hiddenBlockIds": ["canopy"]
+    },
+    "blocks": [
+      { "id": "fuselage",      "kind": "box",      "role": "fuselage",  "position": [0, 0, 0],        "scale": [1.7, 1.6, 12],    "material": "primary",   "damageComponent": "fuselage" },
+      { "id": "nose",          "kind": "wedge",    "role": "nose",      "position": [0, 0, 6.65],     "scale": [1.35, 1.25, 1.6], "material": "secondary", "damageComponent": "engine" },
+      { "id": "canopy",        "kind": "box",      "role": "canopy",    "position": [0, 1.05, 0.9],   "scale": [1.3, 1.0, 2.3],   "material": "canopy",    "damageComponent": "cockpit" },
+      { "id": "mainWing",      "kind": "box",      "role": "wing",      "position": [0, -0.1, 0.4],   "scale": [18, 0.18, 3.8],   "material": "primary",   "damageComponent": "leftWing" },
+      { "id": "leftWingTip",   "kind": "box",      "role": "wing",      "position": [-8.25, 0.03, 0.4], "scale": [1.5, 0.22, 3.42], "material": "secondary", "damageComponent": "leftWing" },
+      { "id": "rightWingTip",  "kind": "box",      "role": "wing",      "position": [ 8.25, 0.03, 0.4], "scale": [1.5, 0.22, 3.42], "material": "secondary", "damageComponent": "rightWing" },
+      { "id": "tailFin",       "kind": "box",      "role": "tail",      "position": [0, 1.2, -5.1],   "scale": [0.22, 2.3, 1.45], "material": "secondary", "damageComponent": "tail" },
+      { "id": "elevators",     "kind": "box",      "role": "tail",      "position": [0, 0.15, -5.45], "scale": [4.6, 0.16, 1.0],  "material": "primary",   "damageComponent": "tail" },
+      { "id": "propA",         "kind": "box",      "role": "propeller", "position": [0, 0, 7.6],      "scale": [6.5, 0.25, 0.08], "material": "metal",     "tags": ["spinZ"] },
+      { "id": "propB",         "kind": "box",      "role": "propeller", "position": [0, 0, 7.6],      "rotation": [0, 0, 1.5707963267948966], "scale": [6.5, 0.25, 0.08], "material": "metal", "tags": ["spinZ"] },
+      { "id": "exhaust",       "kind": "box",      "role": "engine",    "position": [0, 0, -6.25],    "scale": [0.8, 0.8, 0.5],  "material": "accent",    "damageComponent": "fuelTank" },
+      { "id": "grizzlyCannon", "kind": "box",      "role": "weapon",    "position": [0, -0.65, 7.4],  "scale": [0.35, 0.35, 2.5], "material": "metal" },
+      { "id": "leftGrizzlyPod","kind": "box",      "role": "weapon",    "position": [-5.0, -0.55, 0.3],"scale": [1.0, 0.65, 2.5], "material": "secondary" },
+      { "id": "rightGrizzlyPod","kind": "box",     "role": "weapon",    "position": [ 5.0, -0.55, 0.3],"scale": [1.0, 0.65, 2.5], "material": "secondary" },
+      { "id": "bombBody0",     "kind": "cylinder", "role": "weapon",    "position": [-2.45, -0.95, 1.45],  "rotation": [1.5707963267948966, 0, 0], "scale": [0.58, 1.8, 0.58],  "material": "bomb",     "tags": ["ordnance:bomb:0"] },
+      { "id": "bombNose0",     "kind": "wedge",    "role": "weapon",    "position": [-2.45, -0.95, 2.47],  "rotation": [3.141592653589793,  0, 0], "scale": [0.58, 0.58, 0.55], "material": "bomb",     "tags": ["ordnance:bomb:0"] },
+      { "id": "bombBand0",     "kind": "cylinder", "role": "weapon",    "position": [-2.45, -0.95, 1.75],  "rotation": [1.5707963267948966, 0, 0], "scale": [0.64, 0.16, 0.64], "material": "bombBand", "tags": ["ordnance:bomb:0"] },
+      { "id": "bombBody1",     "kind": "cylinder", "role": "weapon",    "position": [ 2.45, -0.95, 1.45],  "rotation": [1.5707963267948966, 0, 0], "scale": [0.58, 1.8, 0.58],  "material": "bomb",     "tags": ["ordnance:bomb:1"] },
+      { "id": "bombNose1",     "kind": "wedge",    "role": "weapon",    "position": [ 2.45, -0.95, 2.47],  "rotation": [3.141592653589793,  0, 0], "scale": [0.58, 0.58, 0.55], "material": "bomb",     "tags": ["ordnance:bomb:1"] },
+      { "id": "bombBand1",     "kind": "cylinder", "role": "weapon",    "position": [ 2.45, -0.95, 1.75],  "rotation": [1.5707963267948966, 0, 0], "scale": [0.64, 0.16, 0.64], "material": "bombBand", "tags": ["ordnance:bomb:1"] },
+      { "id": "bombBody2",     "kind": "cylinder", "role": "weapon",    "position": [-2.45, -0.95, -1.15], "rotation": [1.5707963267948966, 0, 0], "scale": [0.58, 1.8, 0.58],  "material": "bomb",     "tags": ["ordnance:bomb:2"] },
+      { "id": "bombNose2",     "kind": "wedge",    "role": "weapon",    "position": [-2.45, -0.95, -0.13], "rotation": [3.141592653589793,  0, 0], "scale": [0.58, 0.58, 0.55], "material": "bomb",     "tags": ["ordnance:bomb:2"] },
+      { "id": "bombBand2",     "kind": "cylinder", "role": "weapon",    "position": [-2.45, -0.95, -0.85], "rotation": [1.5707963267948966, 0, 0], "scale": [0.64, 0.16, 0.64], "material": "bombBand", "tags": ["ordnance:bomb:2"] },
+      { "id": "bombBody3",     "kind": "cylinder", "role": "weapon",    "position": [ 2.45, -0.95, -1.15], "rotation": [1.5707963267948966, 0, 0], "scale": [0.58, 1.8, 0.58],  "material": "bomb",     "tags": ["ordnance:bomb:3"] },
+      { "id": "bombNose3",     "kind": "wedge",    "role": "weapon",    "position": [ 2.45, -0.95, -0.13], "rotation": [3.141592653589793,  0, 0], "scale": [0.58, 0.58, 0.55], "material": "bomb",     "tags": ["ordnance:bomb:3"] },
+      { "id": "bombBand3",     "kind": "cylinder", "role": "weapon",    "position": [ 2.45, -0.95, -0.85], "rotation": [1.5707963267948966, 0, 0], "scale": [0.64, 0.16, 0.64], "material": "bombBand", "tags": ["ordnance:bomb:3"] }
+    ]
+  },
+  "cockpit": {
+    "eye":         [0, 1.38, 0.95],
+    "sightAnchor": [0, 1.48, 1.635],
+    "panelZ": 1.80, "panelY": 0.99, "panelW": 1.38, "panelH": 0.68
+  },
+  "voxels": {
+    "voxelSize": 0.30,
+    "palette": {
+      "P":   "#4B5563",
+      "S":   "#374151",
+      "A":   "#F97316",
+      "C":   "#7DD3FC",
+      "M":   "#1F2937",
+      "INT": "#1C2A38",
+      "DRK": "#0D1620",
+      "THR": "#243040"
+    },
+    "commands": [
+      { "op": "shell",  "x0": -4, "y0": -4, "z0": -24, "x1": 4,  "y1": 4,  "z1": 24,  "color": "P",   "zone": "fuselage" },
+      { "op": "shell",  "x0": -4, "y0": -4, "z0": -24, "x1": 4,  "y1": 4,  "z1": -12, "color": "S",   "zone": "engine" },
+      { "op": "solid",  "x0": -3, "y0": -1, "z0": -25, "x1": -1, "y1": -1, "z1": -25, "color": "A",   "zone": "engine" },
+      { "op": "solid",  "x0":  1, "y0": -1, "z0": -25, "x1":  3, "y1": -1, "z1": -25, "color": "A",   "zone": "engine" },
+      { "op": "shell",  "x0": -4, "y0": -4, "z0": -24, "x1": 4,  "y1": 4,  "z1": -18, "color": "S",   "zone": "tail" },
+      { "op": "shell",  "x0": -3, "y0": -3, "z0": 20,  "x1": 3,  "y1": 3,  "z1": 26,  "color": "P",   "zone": "engine" },
+      { "op": "solid",  "x0": -2, "y0": -2, "z0": 27,  "x1": 2,  "y1": 2,  "z1": 27,  "color": "S",   "zone": "engine" },
+      { "op": "solid",  "x0": -1, "y0": -1, "z0": 28,  "x1": 1,  "y1": 1,  "z1": 28,  "color": "S",   "zone": "engine" },
+      { "op": "solid",  "x0":  0, "y0":  0, "z0": 29,  "x1": 0,  "y1": 0,  "z1": 29,  "color": "S",   "zone": "engine" },
+      { "op": "solid",  "x0": -4, "y0": -4, "z0": -10, "x1": 4,  "y1": -4, "z1": 8,   "color": "M",   "zone": "fuelTank" },
+      { "op": "shell",  "x0": -2, "y0":  4, "z0": 10,  "x1": 2,  "y1": 8,  "z1": 18,  "color": "C",   "zone": "cockpit" },
+      { "op": "solid",  "x0":  5, "y0": -2, "z0": -10, "x1": 36, "y1": -2, "z1": 2,   "color": "P",   "zone": "rightWing" },
+      { "op": "solid",  "x0":  5, "y0": -2, "z0":   4, "x1": 36, "y1": -2, "z1": -2,  "color": "P",   "zone": "rightWing" },
+      { "op": "solid",  "x0": -36,"y0": -2, "z0": -10, "x1": -5, "y1": -2, "z1": 2,   "color": "P",   "zone": "leftWing" },
+      { "op": "solid",  "x0": -36,"y0": -2, "z0":   4, "x1": -5, "y1": -2, "z1": -2,  "color": "P",   "zone": "leftWing" },
+      { "op": "solid",  "x0":  5, "y0": -2, "z0":   2, "x1": 36, "y1": -2, "z1": 2,   "color": "A",   "zone": "rightWing" },
+      { "op": "solid",  "x0": -36,"y0": -2, "z0":   2, "x1": -5, "y1": -2, "z1": 2,   "color": "A",   "zone": "leftWing" },
+      { "op": "solid",  "x0": 36, "y0": -2, "z0": -10, "x1": 36, "y1": -2, "z1": 4,   "color": "S",   "zone": "rightWing" },
+      { "op": "solid",  "x0": -36,"y0": -2, "z0": -10, "x1": -36,"y1": -2, "z1": 4,   "color": "S",   "zone": "leftWing" },
+      { "op": "shell",  "x0": 12, "y0": -5, "z0": -16, "x1": 18, "y1": -2, "z1": 14,  "color": "S",   "zone": "engine" },
+      { "op": "solid",  "x0": 12, "y0": -3, "z0": -17, "x1": 18, "y1": -3, "z1": -17, "color": "A",   "zone": "engine" },
+      { "op": "shell",  "x0": -18,"y0": -5, "z0": -16, "x1": -12,"y1": -2, "z1": 14,  "color": "S",   "zone": "engine" },
+      { "op": "solid",  "x0": -18,"y0": -3, "z0": -17, "x1": -12,"y1": -3, "z1": -17, "color": "A",   "zone": "engine" },
+      { "op": "solid",  "x0":  0, "y0":  4, "z0": -22, "x1": 0,  "y1": 13, "z1": -13, "color": "S",   "zone": "tail" },
+      { "op": "solid",  "x0": -12,"y0":  0, "z0": -24, "x1": 12, "y1": 0,  "z1": -20, "color": "P",   "zone": "tail" },
+      { "op": "solid",  "x0": -2, "y0":  4, "z0":  13, "x1": 2,  "y1": 4,  "z1": 17,  "color": "INT", "zone": "fuselage" },
+      { "op": "solid",  "x0": -2, "y0":  4, "z0":  17, "x1": 2,  "y1": 6,  "z1": 17,  "color": "DRK", "zone": "fuselage" },
+      { "op": "solid",  "x0": -2, "y0":  4, "z0":  11, "x1": -2, "y1": 4,  "z1": 16,  "color": "INT", "zone": "fuselage" },
+      { "op": "solid",  "x0":  2, "y0":  4, "z0":  11, "x1":  2, "y1": 4,  "z1": 16,  "color": "INT", "zone": "fuselage" },
+      { "op": "solid",  "x0": -2, "y0":  5, "z0":  11, "x1": -2, "y1": 5,  "z1": 15,  "color": "THR", "zone": "fuselage" },
+      { "op": "solid",  "x0": -2, "y0":  6, "z0":  11, "x1": -2, "y1": 6,  "z1": 15,  "color": "THR", "zone": "fuselage" },
+      { "op": "solid",  "x0":  0, "y0":  4, "z0":  12, "x1": 0,  "y1": 4,  "z1": 12,  "color": "M",   "zone": "fuselage" },
+      { "op": "solid",  "x0":  0, "y0":  5, "z0":  12, "x1": 0,  "y1": 5,  "z1": 12,  "color": "M",   "zone": "fuselage" }
+    ]
+  }
+}
