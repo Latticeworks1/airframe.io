@@ -1,22 +1,22 @@
 FROM node:20-slim
 
-# Create a non-root user with UID 1000
-RUN useradd -m -u 1000 user
+# The base image already contains a 'node' user with UID 1000.
+WORKDIR /home/node/app
 
-WORKDIR /home/user/app
+# Copy package files with ownership set to the node user
+COPY --chown=node:node package*.json ./
 
-# Copy package files and install dependencies
-COPY --chown=user package*.json ./
+# Switch to the node user for all subsequent commands
+USER node
+
+# Install dependencies
 RUN npm ci
 
 # Copy the rest of the application files
-COPY --chown=user . .
+COPY --chown=node:node . .
 
 # Build client and server bundles, then prune development dependencies
 RUN npm run build && npm prune --omit=dev
-
-# Switch to the non-root user
-USER user
 
 EXPOSE 7860
 
