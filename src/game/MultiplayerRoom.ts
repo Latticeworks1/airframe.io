@@ -119,6 +119,7 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
   private playerHistory = new Map<string, HistoricalTransform[]>();
 
   async onCreate(options: any) {
+    this.autoDispose = false;
     this.setState(new MatchState());
     
     this.mapId = options.mapId || "island-chain";
@@ -1007,13 +1008,16 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
   private endGame() {
     if (this.state.matchEnded) return;
     this.state.matchEnded = true;
-    
+
     const team1Won = this.state.team1Score >= this.state.team2Score;
     this.broadcast("match_end", {
       team1Score: this.state.team1Score,
       team2Score: this.state.team2Score,
       team1Won
     });
+
+    // Disconnect all clients and release the room after results are visible.
+    setTimeout(() => this.disconnect(), 15000);
   }
 
   // ---- Private Helpers ----
