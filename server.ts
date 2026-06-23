@@ -19,6 +19,9 @@ async function startServer() {
   });
   gameServer.define("air_combat", MultiplayerRoom);
 
+  // Bind matchmaking and HTTP routes to the server without breaking Express body-parser
+  (gameServer as any).bindRoutes();
+
   // Authoritative progression save directory
   const saveDir = existsSync("/data") ? "/data/saves" : path.join(process.cwd(), "saves");
   if (!existsSync(saveDir)) {
