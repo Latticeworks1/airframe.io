@@ -71,6 +71,15 @@ export function useMultiplayer() {
       })
       .catch((err) => {
         console.error("[Multiplayer] Join failed:", err);
+        fetch("/api/client-error", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            context: "connectMultiplayer.catch",
+            message: err?.message || String(err),
+            stack: err?.stack || ""
+          })
+        }).catch(() => {});
         onMatchRejected("connection_failed");
       });
 

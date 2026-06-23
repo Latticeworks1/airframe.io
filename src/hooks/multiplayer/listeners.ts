@@ -6,6 +6,29 @@ import { DEFAULT_AIRCRAFT } from "../../game/aircraftData";
 import { Pilot, AmmoBelt, WeaponType } from "../../types";
 import { FlightPhysicsEngine } from "../../game/flightModel";
 
+function reportError(err: any, context: string) {
+  console.error(`[Multiplayer Error] ${context}:`, err);
+  fetch("/api/client-error", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      context,
+      message: err?.message || String(err),
+      stack: err?.stack || ""
+    })
+  }).catch(() => {});
+}
+
+function safeWrap(cb: (...args: any[]) => void, context: string): (...args: any[]) => void {
+  return (...args: any[]) => {
+    try {
+      cb(...args);
+    } catch (err) {
+      reportError(err, context);
+    }
+  };
+}
+
 export function setupRoomListeners(
   room: Room,
   engine: MultiplayerMatchContext,
@@ -13,15 +36,15 @@ export function setupRoomListeners(
   onLocalPlayerHit: (tgtId: string, isGround: boolean) => void
 ) {
   // Sync Colyseus room state
-  room.onStateChange((state) => {
+  room.onStateChange(safeWrap((state) => {
     engine.team1Score = state.team1Score;
     engine.team2Score = state.team2Score;
     engine.matchTimer = state.matchTimer;
     engine.matchEnded = state.matchEnded;
-  });
+  }, "onStateChange"));
 
   // Sync player entries in Colyseus schema
-  room.state.players.onAdd((player: any, key: string) => {
+  room.state.players.onAdd(safeWrap((player: any, key: string) => {
     if (key === room.sessionId) return; // ignore local player
 
     const existing = engine.pilots.find((p) => p.id === key);
@@ -54,21 +77,21 @@ export function setupRoomListeners(
       });
       engine.pilots.push(newPilot);
     }
-  });
+  }, "state.players.onAdd"));
 
-  room.state.players.onRemove((player: any, key: string) => {
+  room.state.players.onRemove(safeWrap((player: any, key: string) => {
     engine.pilots = engine.pilots.filter((p) => p.id !== key);
-  });
+  }, "state.players.onRemove"));
 
   // Listen for messages
-  room.onMessage("chat", ([_tick, _senderId, senderName, text]) => {
+  room.onMessage("chat", safeWrap(([_tick, _senderId, senderName, text]) => {
     setChatMessages((prev) => [
       ...prev.slice(-49),
       { sender: senderName, text, ts: Date.now() }
     ]);
-  });
+  }, "onMessage:chat"));
 
-  room.onMessage("snapshot", ([tick, lastSeqs, entities]) => {
+  room.onMessage("snapshot", safeWrap(([tick, lastSeqs, entities]) => {
     const mySeq = lastSeqs[room.sessionId];
 
     entities.forEach((entity: any) => {
@@ -114,38 +137,38 @@ export function setupRoomListeners(
         }
       }
     });
-  });
+  }, "onMessage:snapshot"));
 
-  room.onMessage("player_fired", ({ id, weaponType }) => {
+  room.onMessage("player_fired", safeWrap(({ id, weaponType }) => {
     if (id !== room.sessionId) {
       const pilot = engine.pilots.find((p) => p.id === id);
       if (pilot) engine.spawnProjectile(pilot, weaponType);
     }
-  });
+  }, "onMessage:player_fired"));
 
-  room.onMessage("projectile_impact", ({ type, px, py, pz }) => {
+  room.onMessage("projectile_impact", safeWrap(({ type, px, py, pz }) => {
     engine.onProjectileImpact?.(type, new Vector3(px, py, pz), "server");
-  });
+  }, "onMessage:projectile_impact"));
 
-  room.onMessage("voxel_impact", ({ targetId, lx, ly, lz, blast }) => {
+  room.onMessage("voxel_impact", safeWrap(({ targetId, lx, ly, lz, blast }) => {
     engine.onVoxelHit?.(targetId, new Vector3(lx, ly, lz), blast);
-  });
+  }, "onMessage:voxel_impact"));
 
-  room.onMessage("ground_updated", ({ targetId, hp, isDead }) => {
+  room.onMessage("ground_updated", safeWrap(({ targetId, hp, isDead }) => {
     const target = engine.groundTargets.find((t) => t.id === targetId);
     if (target) { target.hp = hp; target.isDead = isDead; }
-  });
+  }, "onMessage:ground_updated"));
 
-  room.onMessage("damage_inflicted", ({ damage, bulletType, hitSpotLocal }) => {
+  room.onMessage("damage_inflicted", safeWrap(({ damage, bulletType, hitSpotLocal }) => {
     const localPlayer = engine.pilots.find((p) => p.id === "player");
     if (localPlayer) {
       const spot = new Vector3(hitSpotLocal.x, hitSpotLocal.y, hitSpotLocal.z);
       FlightPhysicsEngine.applyDamage(localPlayer, damage, bulletType, spot);
       onLocalPlayerHit("player", false);
     }
-  });
+  }, "onMessage:damage_inflicted"));
 
-  room.onMessage("pilot_respawned", ({ id, x, y, z, yaw }) => {
+  room.onMessage("pilot_respawned", safeWrap(({ id, x, y, z, yaw }) => {
     const pilot = engine.pilots.find((p) => p.id === (id === room.sessionId ? "player" : id));
     if (pilot) {
       pilot.x = x; pilot.y = y; pilot.z = z; pilot.yaw = yaw;
@@ -157,18 +180,18 @@ export function setupRoomListeners(
       };
       engine.onPilotRespawn?.(id === room.sessionId ? "player" : id);
     }
-  });
+  }, "onMessage:pilot_respawned"));
 
-  room.onMessage("kill_confirmed", ({ killerId, victimId, weapon }) => {
+  room.onMessage("kill_confirmed", safeWrap(({ killerId, victimId, weapon }) => {
     const kMap = killerId === room.sessionId ? "player" : killerId;
     const vMap = victimId === room.sessionId ? "player" : victimId;
     engine.forceRegisterKill(kMap, vMap, weapon);
-  });
+  }, "onMessage:kill_confirmed"));
 
-  room.onMessage("match_end", ({ team1Won }) => {
+  room.onMessage("match_end", safeWrap(({ team1Won }) => {
     const localPlayer = engine.pilots.find((p) => p.id === "player");
     const myTeam = localPlayer?.team ?? 1;
     const won = (myTeam === 1 && team1Won) || (myTeam === 2 && !team1Won);
     engine.forceEndGame(won);
-  });
+  }, "onMessage:match_end"));
 }

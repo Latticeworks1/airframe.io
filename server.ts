@@ -57,6 +57,11 @@ async function startServer() {
   app.get("/api/presence", (req, res) => res.json({ ok: true }));
   app.get("/api/ice-servers", (req, res) => res.json([{ urls: "stun:stun.l.google.com:19302" }]));
 
+  app.post("/api/client-error", (req, res) => {
+    console.error("[Client Diagnostic Error]:", req.body);
+    res.json({ ok: true });
+  });
+
   app.get("/api/health", async (req, res) => {
     const token = (req.query.t as string) || req.ip || "anon";
     const now = Date.now();
