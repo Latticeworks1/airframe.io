@@ -1,22 +1,22 @@
 FROM node:20-slim
 
-# The base image already contains a 'node' user with UID 1000.
-WORKDIR /home/node/app
+WORKDIR /app
 
-# Copy package files with ownership set to the node user
-COPY --chown=node:node package*.json ./
-
-# Switch to the node user for all subsequent commands
-USER node
-
-# Install dependencies
+# Copy package files and install dependencies
+COPY package*.json ./
 RUN npm ci
 
 # Copy the rest of the application files
-COPY --chown=node:node . .
+COPY . .
 
 # Build client and server bundles, then prune development dependencies
 RUN npm run build && npm prune --omit=dev
+
+# Change ownership of the application directory to the non-root node user
+RUN chown -R node:node /app
+
+# Switch to the node user for runtime execution
+USER node
 
 EXPOSE 7860
 
