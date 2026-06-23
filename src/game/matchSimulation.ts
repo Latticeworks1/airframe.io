@@ -89,7 +89,7 @@ function createEmptyInputFrame(): InputFrame {
   };
 }
 
-export class GameEngine {
+export class MatchSimulation {
   public pilots: Pilot[] = [];
   public projectiles: Projectile[] = [];
   public groundTargets: GroundTarget[] = [];
@@ -149,7 +149,7 @@ export class GameEngine {
 
   private controllers = new Map<string, AircraftController>();
 
-  private getOrCreateController(pilotId: string): AircraftController {
+  public getOrCreateController(pilotId: string): AircraftController {
     let ctrl = this.controllers.get(pilotId);
     if (!ctrl) {
       ctrl = new AircraftController();
@@ -575,11 +575,10 @@ export class GameEngine {
       this.tickPilotCooldowns(step);
 
       const player = this.pilots.find(p => p.id === "player") as EnginePilot | undefined;
-
       if (player) {
         if (player.damage.fuselage <= 0) {
           this.updateDeadPilot(player, step);
-        } else {
+        } else if (!this.isMultiplayer) {
           const controller = this.getOrCreateController(player.id);
           const command = controller.update(player, inputFrame, playerMouseTarget, step);
           player.lastCommand = command;
@@ -854,7 +853,7 @@ export class GameEngine {
     this.onKillCallback(event);
   }
 
-  private enforceMapBoundary(pilot: Pilot, dt: number) {
+  public enforceMapBoundary(pilot: Pilot, dt: number) {
     const mapRadius = MAP_REGISTRY[this.selectedMapId]?.world?.radius ?? 6000;
     const dist = Math.sqrt(pilot.x * pilot.x + pilot.z * pilot.z);
     if (dist > mapRadius) {

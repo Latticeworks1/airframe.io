@@ -15,11 +15,48 @@ export interface HeightmapData {
 const heightmapCache = new Map<string, HeightmapData>();
 
 export async function loadHeightmap(
-  path: string,
+  pathStr: string,
   worldRadius: number,
   elevationScale: number
 ): Promise<HeightmapData> {
-  if (heightmapCache.has(path)) return heightmapCache.get(path)!;
+  if (heightmapCache.has(pathStr)) return heightmapCache.get(pathStr)!;
+
+  if (typeof window === "undefined") {
+    // Node environment
+    try {
+      const fs = await import("fs");
+      const path = await import("path");
+      const sharp = (await import("sharp")).default;
+
+      const cleanPath = pathStr.startsWith("/") ? pathStr.slice(1) : pathStr;
+      const fullPath = path.join(process.cwd(), "public", cleanPath);
+
+      if (fs.existsSync(fullPath)) {
+        const fileBuffer = fs.readFileSync(fullPath);
+        const { data, info } = await sharp(fileBuffer).raw().toBuffer({ resolveWithObject: true });
+        
+        const channels = info.channels;
+        const buf = new Float32Array(info.width * info.height);
+        for (let i = 0; i < buf.length; i++) {
+          buf[i] = data[i * channels] / 255;
+        }
+
+        const heightmapData: HeightmapData = {
+          buffer: buf,
+          width: info.width,
+          height: info.height,
+          worldRadius,
+          elevationScale
+        };
+        heightmapCache.set(pathStr, heightmapData);
+        return heightmapData;
+      }
+    } catch (err) {
+      console.error(`Failed to load heightmap headlessly for ${pathStr}:`, err);
+    }
+  }
+
+  // Browser environment
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -32,12 +69,12 @@ export async function loadHeightmap(
       const buf = new Float32Array(img.width * img.height);
       for (let i = 0; i < buf.length; i++) buf[i] = px[i * 4] / 255;
       const data: HeightmapData = { buffer: buf, width: img.width, height: img.height, worldRadius, elevationScale };
-      heightmapCache.set(path, data);
+      heightmapCache.set(pathStr, data);
       resolve(data);
     };
-    img.onerror = () => reject(new Error(`Failed to load heightmap: ${path}`));
+    img.onerror = () => reject(new Error(`Failed to load heightmap: ${pathStr}`));
     const baseUrl = ((import.meta as any).env.BASE_URL || "/").replace(/\/$/, "");
-    img.src = path.startsWith("http") ? path : `${baseUrl}${path}`;
+    img.src = pathStr.startsWith("http") ? pathStr : `${baseUrl}${pathStr}`;
   });
 }
 

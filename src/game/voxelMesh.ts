@@ -17,19 +17,19 @@ type CellState = {
   exposed: boolean;
 };
 
-export interface VoxelMeshState {
-  // Static geometry (all non-spinZ cells). Only updated on deformation.
-  mesh: THREE.InstancedMesh;
-  // spinZ cells get their own tiny InstancedMesh so that the per-frame matrix
-  // upload is proportional to the number of propeller blades (≤23) rather than
-  // the total cell count (≤1909).
-  spinMesh: THREE.InstancedMesh | null;
+export interface VoxelGridState {
   cells: Map<string, CellState>;
   voxelSize: number;
   spinCells: { idx: number; gx: number; gy: number; gz: number }[];
   spinAngle: number;
-  // Tracks cockpit visibility so setCockpitVisible only uploads on transitions.
   cockpitHidden: boolean;
+  mesh?: THREE.InstancedMesh | null;
+  spinMesh?: THREE.InstancedMesh | null;
+}
+
+export interface VoxelMeshState extends VoxelGridState {
+  mesh: THREE.InstancedMesh;
+  spinMesh: THREE.InstancedMesh | null;
 }
 
 // ---- module-level scratch --------------------------------------------------
@@ -43,6 +43,37 @@ const _hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
 const _col = new THREE.Color();
 
 // ---- builder ---------------------------------------------------------------
+
+export function buildVoxelGrid(def: VoxelAircraftDef): VoxelGridState {
+  const grid = new Set<string>(def.cells.map(c => cellKey(c.gx, c.gy, c.gz)));
+  const cells = new Map<string, CellState>();
+  const spinCells: VoxelGridState["spinCells"] = [];
+  const s = def.voxelSize;
+
+  const staticSurface = def.cells.filter(c => !c.tags?.includes("spinZ"));
+  const spinSurface   = def.cells.filter(c =>  c.tags?.includes("spinZ"));
+
+  for (let i = 0; i < staticSurface.length; i++) {
+    const c = staticSurface[i];
+    const exposed = DIRS.some(([dx, dy, dz]) => !grid.has(cellKey(c.gx + dx, c.gy + dy, c.gz + dz)));
+    cells.set(cellKey(c.gx, c.gy, c.gz), {
+      idx: i, inSpinMesh: false, alive: true, zone: c.zone,
+      tags: c.tags, gx: c.gx, gy: c.gy, gz: c.gz, exposed
+    });
+  }
+
+  for (let i = 0; i < spinSurface.length; i++) {
+    const c = spinSurface[i];
+    const exposed = DIRS.some(([dx, dy, dz]) => !grid.has(cellKey(c.gx + dx, c.gy + dy, c.gz + dz)));
+    cells.set(cellKey(c.gx, c.gy, c.gz), {
+      idx: i, inSpinMesh: true, alive: true, zone: c.zone,
+      tags: c.tags, gx: c.gx, gy: c.gy, gz: c.gz, exposed
+    });
+    spinCells.push({ idx: i, gx: c.gx, gy: c.gy, gz: c.gz });
+  }
+
+  return { cells, voxelSize: s, spinCells, spinAngle: 0, cockpitHidden: false };
+}
 
 export function buildVoxelMesh(def: VoxelAircraftDef, shadows = true): VoxelMeshState {
   const grid = new Set<string>(def.cells.map(c => cellKey(c.gx, c.gy, c.gz)));
@@ -125,7 +156,7 @@ export function buildVoxelMesh(def: VoxelAircraftDef, shadows = true): VoxelMesh
 // ---- ray traversal ---------------------------------------------------------
 
 export function findVoxelImpact(
-  state: VoxelMeshState,
+  state: VoxelGridState,
   segA: Vector3,
   segB: Vector3
 ): THREE.Vector3 | null {
@@ -189,7 +220,7 @@ export const VOXEL_BLAST_RADII: Record<string, number> = {
 };
 
 export function deformAtImpact(
-  state: VoxelMeshState,
+  state: VoxelGridState,
   localMeters: Vector3,
   blastMeters: number
 ): boolean {
@@ -240,7 +271,7 @@ export function deformAtImpact(
     }
   }
 
-  if (staticDirty) state.mesh.instanceMatrix.needsUpdate = true;
+  if (staticDirty && state.mesh) state.mesh.instanceMatrix.needsUpdate = true;
   if (spinDirty && state.spinMesh) state.spinMesh.instanceMatrix.needsUpdate = true;
   return changed;
 }
@@ -354,9 +385,11 @@ export function disposeVoxelMesh(state: VoxelMeshState): void {
 
 // ---- private helpers -------------------------------------------------------
 
-function _hideCell(state: VoxelMeshState, cell: CellState): void {
-  const m = cell.inSpinMesh ? state.spinMesh! : state.mesh;
-  m.setMatrixAt(cell.idx, _hiddenMatrix);
+function _hideCell(state: VoxelGridState, cell: CellState): void {
+  if (state.mesh) {
+    const m = cell.inSpinMesh ? state.spinMesh! : state.mesh;
+    m.setMatrixAt(cell.idx, _hiddenMatrix);
+  }
 }
 
 function _setMatrix(obj: THREE.Object3D, x: number, y: number, z: number, scale: number): void {
@@ -366,7 +399,7 @@ function _setMatrix(obj: THREE.Object3D, x: number, y: number, z: number, scale:
   obj.updateMatrix();
 }
 
-function _exposeNeighbors(state: VoxelMeshState, gx: number, gy: number, gz: number, exposedAndChanged: Set<CellState>) {
+function _exposeNeighbors(state: VoxelGridState, gx: number, gy: number, gz: number, exposedAndChanged: Set<CellState>) {
   const s = state.voxelSize;
   const gap = s;
   for (const [dx, dy, dz] of DIRS) {
@@ -382,9 +415,11 @@ function _exposeNeighbors(state: VoxelMeshState, gx: number, gy: number, gz: num
       if (isExposedNow) {
         neighbor.exposed = true;
         exposedAndChanged.add(neighbor);
-        const targetMesh = neighbor.inSpinMesh ? state.spinMesh! : state.mesh;
-        _setMatrix(_dummy, neighbor.gx * s, neighbor.gy * s, neighbor.gz * s, gap);
-        targetMesh.setMatrixAt(neighbor.idx, _dummy.matrix);
+        if (state.mesh) {
+          _setMatrix(_dummy, neighbor.gx * s, neighbor.gy * s, neighbor.gz * s, gap);
+          const targetMesh = neighbor.inSpinMesh ? state.spinMesh! : state.mesh;
+          targetMesh.setMatrixAt(neighbor.idx, _dummy.matrix);
+        }
       }
     }
   }
@@ -393,3 +428,4 @@ function _exposeNeighbors(state: VoxelMeshState, gx: number, gy: number, gz: num
 function cellKey(gx: number, gy: number, gz: number): string {
   return `${gx},${gy},${gz}`;
 }
+

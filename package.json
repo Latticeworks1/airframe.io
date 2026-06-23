@@ -18,6 +18,11 @@
     "test:convergence": "node --import tsx/esm src/game/projectileConvergence.test.ts"
   },
   "dependencies": {
+    "@colyseus/core": "^0.17.44",
+    "@colyseus/schema": "^4.0.26",
+    "@colyseus/sdk": "^0.17.43",
+    "@colyseus/ws-transport": "^0.17.13",
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",

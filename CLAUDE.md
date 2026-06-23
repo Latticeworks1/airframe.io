@@ -21,17 +21,17 @@ Environment: copy `.env.example` to `.env.local` and set `GEMINI_API_KEY` to a G
 
 ## Architecture
 
-The system is a browser-based multiplayer air combat game. The Express server in `server.ts` acts as both a Vite dev middleware (in development) and a static file server (in production), while simultaneously running a WebSocket server at `/multiplayer` for real-time match synchronization.
+The system is a browser-based multiplayer air combat game. The Express server in `server.ts` hosts a server-authoritative Colyseus game server while acting as Vite dev middleware (in development) and static file server (in production).
 
-`src/App.tsx` is the central orchestrator. It owns a React Animation Frame loop that calls three independent subsystems each tick: `GameEngine.update()` for simulation, `WorldRenderer.updateWorld()` for scene rendering, and `InputManager.getInputFrame()` for control sampling. React state is used only for the HUD layer and UI screens; the game loop itself operates entirely through mutable class instances held in refs to avoid React's render cycle overhead.
+The "game engine" is the runtime collective of all ECS systems (Input, Aerodynamics, Physics, Collision, Voxel deformation, AI, Objective) operating concurrently. `src/App.tsx` is the client orchestrator, maintaining a React Animation Frame loop. Each tick, it drives input sampling, client-side prediction, and `WorldRenderer.updateWorld()` for rendering.
 
 The game layer stack is:
 
-`InputManager` captures raw keyboard and mouse events into a flat `InputFrame` struct each tick. `AircraftController` translates the `InputFrame` and a 3D mouse target point into a normalized `FlightCommand`. `FlightPhysicsEngine` (in `flightModel.ts`) applies Newtonian integration using per-surface aerodynamic forces computed by `AerodynamicsEngine` (in `aeroSurfaceModel.ts`), which models each control surface individually with lift slope, aspect ratio, and Oswald efficiency. The resulting pilot position/velocity/orientation is written directly onto the mutable `Pilot` object. `WorldRenderer` reads those same `Pilot` objects and drives a Three.js scene.
+`InputManager` captures raw control states into an `InputFrame` struct. `AircraftController` translates the `InputFrame` into a `FlightCommand`. `FlightPhysicsEngine` (in `flightModel.ts`) integrates forces computed by `AerodynamicsEngine` (in `aeroSurfaceModel.ts`) and writes coordinates directly onto the mutable `Pilot` object. `WorldRenderer` maps these states to the Three.js scene.
 
-The global axis contract used throughout all physics and rendering code is: aircraft local `+Z` = nose/forward/gun direction, `+Y` = up, `+X` = right wing. Euler rotation order is always `YXZ` (yaw applied first, then pitch, then roll).
+The global axis contract used throughout all physics and rendering code is: aircraft local `+Z` = nose/forward/gun direction, `+Y` = up, `+X` = right wing. Euler rotation order is always `YXZ`.
 
-`GameEngine` owns the authoritative simulation state: the `pilots` array (players and bots), `projectiles`, `groundTargets`, `skyZones`, and match score/timer. In multiplayer, the first connected client is designated host and is solely responsible for simulating and broadcasting bot states (`bots_sync`) and team scores (`score_sync`). Non-host clients receive bot positions via `bots_updated` messages and apply them directly to their local pilot objects without re-simulating.
+`MatchSimulation` (in `matchSimulation.ts`) acts as the state container for the active local match, hosting arrays of pilots, projectiles, ground targets, and sky zones. In multiplayer, the server runs the simulation authoritatively inside `MultiplayerRoom.ts` at 60Hz. The client runs Client-Side Prediction (CSP) for the local player, and smooth entity slerp interpolation for remote pilots, bots, and objectives synchronized via Colyseus state and snapshots.
 
 ## Content Structure
 

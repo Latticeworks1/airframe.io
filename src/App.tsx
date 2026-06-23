@@ -21,13 +21,14 @@ import {
 import { MainMenu } from "./components/MainMenu";
 import { PilotRegistration } from "./components/PilotRegistration";
 import { GameHUD } from "./components/GameHUD";
-import { GameEngine } from "./game/gameEngine";
+import { MatchSimulation } from "./game/matchSimulation";
 import { WorldRenderer } from "./game/worldRenderer";
 import { InputManager } from "./game/inputManager";
 import { MAP_REGISTRY } from "./game/content/maps/registry";
 import { KnownMaps } from "./game/content/maps/mapTypes";
 import { loadHeightmap } from "./game/terrainModel";
 import { Vector3, Quaternion, Euler } from "three";
+import { FlightPhysicsEngine } from "./game/flightModel";
 
 // Screens and hooks
 import { PauseMenu } from "./components/screens/PauseMenu";
@@ -55,9 +56,7 @@ export default function App() {
     connectMultiplayer,
     disconnectMultiplayer,
     sendChat,
-    socketRef,
-    dataChansRef,
-    myPilotIdRef,
+    roomRef,
   } = useMultiplayer();
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -75,8 +74,8 @@ export default function App() {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const renderer3DRef = useRef<WorldRenderer | null>(null);
   const inputManagerRef = useRef<InputManager | null>(null);
-  const activeEngineRef = useRef<GameEngine | null>(null);
-  const [activeEngine, setActiveEngine] = useState<GameEngine | null>(null);
+  const activeEngineRef = useRef<MatchSimulation | null>(null);
+  const [activeEngine, setActiveEngine] = useState<MatchSimulation | null>(null);
 
   // POV and Lead Targeting State
   const [cameraMode, setCameraMode] = useState<CameraMode>("third-person");
@@ -269,7 +268,7 @@ export default function App() {
     renderer3DRef.current = renderer3D;
     renderer3D.setCameraMode(cameraModeRef.current, "player");
 
-    const engine = new GameEngine(
+    const engine = new MatchSimulation(
       planeId,
       belt,
       mods,
@@ -370,18 +369,6 @@ export default function App() {
 
     engine.onVoxelHit = (targetId, localOffsetMeters, blastMeters) => {
       renderer3D.deformAircraft(targetId, localOffsetMeters, blastMeters);
-      if (isMultiplayer && socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(
-          JSON.stringify({
-            type: "voxel_impact",
-            targetId,
-            lx: localOffsetMeters.x,
-            ly: localOffsetMeters.y,
-            lz: localOffsetMeters.z,
-            blast: blastMeters
-          })
-        );
-      }
     };
 
     engine.onPilotRespawn = (pilotId: string) => {
@@ -398,7 +385,6 @@ export default function App() {
     const activeAimPos = { x: 0, y: 0 };
     let activeAimPosInitialized = false;
     let playerWasDead = false;
-    let lastSendTime = 0;
     let lastHudSyncTime = 0;
     let fpsWindowStart = performance.now();
     let fpsFrameCount = 0;
@@ -439,6 +425,15 @@ export default function App() {
     const _netQ = new Quaternion();
     const _netQSnap = new Quaternion();
     const _netEuler = new Euler();
+
+    let clientTickSeq = 0;
+    let clientAccumulator = 0;
+    const CLIENT_TICK_RATE = 1 / 60;
+    const pendingInputs: { seq: number; command: any }[] = [];
+    const predictionHistory = new Map<
+      number,
+      { position: Vector3; velocity: Vector3; pitch: number; yaw: number; roll: number }
+    >();
 
     const loop = (now: number) => {
       const dt = Math.min(0.08, (now - lastTime) / 1000);
@@ -492,112 +487,99 @@ export default function App() {
       }
       playerWasDead = playerIsDead;
 
-      if (isMultiplayer && now - lastSendTime > 16) {
-        lastSendTime = now;
-        if (localPlayer) {
-          const r1 = (v: number) => Math.round(v * 10) / 10;
-          const r3 = (v: number) => Math.round(v * 1000) / 1000;
-          const r2d = (v: number) => Math.round(v * 100) / 100;
-          const dm = localPlayer.damage;
-          const pilotState = {
-            x: r1(localPlayer.x),
-            y: r1(localPlayer.y),
-            z: r1(localPlayer.z),
-            vx: r2d(localPlayer.vx),
-            vy: r2d(localPlayer.vy),
-            vz: r2d(localPlayer.vz),
-            pitch: r3(localPlayer.pitch),
-            yaw: r3(localPlayer.yaw),
-            roll: r3(localPlayer.roll),
-            throttle: r2d(localPlayer.throttle),
-            damage: {
-              engine: r2d(dm.engine),
-              leftWing: r2d(dm.leftWing),
-              rightWing: r2d(dm.rightWing),
-              tail: r2d(dm.tail),
-              cockpit: r2d(dm.cockpit),
-              fuelTank: r2d(dm.fuelTank),
-              fuselage: r2d(dm.fuselage),
-              hasFire: dm.hasFire,
-              hasOilLeak: dm.hasOilLeak
-            },
-            ammo: localPlayer.ammo,
-            score: localPlayer.score,
-            kills: localPlayer.kills,
-            deaths: localPlayer.deaths
-          };
+      // 1. Client-Side Prediction (Reconciliation)
+      if (isMultiplayer && localPlayer && localPlayer.damage.fuselage > 0) {
+        const serverPos = (localPlayer as any).serverPosition;
+        if (serverPos) {
+          const ackSeq = (localPlayer as any).serverLastProcessedSeq;
 
-          // Send to server for state bookkeeping (new joiner welcome snapshots)
-          if (socketRef.current?.readyState === WebSocket.OPEN) {
-            socketRef.current.send(JSON.stringify({ type: "update", pilotState }));
+          // Discard acknowledged inputs from pending
+          while (pendingInputs.length > 0 && pendingInputs[0].seq <= ackSeq) {
+            pendingInputs.shift();
           }
 
-          // Also broadcast directly to peers via DataChannels (bypasses HF proxy)
-          const dcPayload = JSON.stringify({
-            type: "player_updated",
-            id: myPilotIdRef.current,
-            state: pilotState
-          });
-          dataChansRef.current.forEach(dc => {
-            if (dc.readyState === "open") dc.send(dcPayload);
-          });
+          // Compare prediction matching the acknowledged tick
+          const ackState = predictionHistory.get(ackSeq);
+          if (ackState) {
+            const dist = serverPos.distanceTo(ackState.position);
+            if (dist > 0.05) {
+              // Snap local player state to server values
+              localPlayer.x = serverPos.x;
+              localPlayer.y = serverPos.y;
+              localPlayer.z = serverPos.z;
+              localPlayer.vx = (localPlayer as any).serverVelocity.x;
+              localPlayer.vy = (localPlayer as any).serverVelocity.y;
+              localPlayer.vz = (localPlayer as any).serverVelocity.z;
+
+              // Replay all inputs since that tick
+              pendingInputs.forEach((inp) => {
+                FlightPhysicsEngine.update(localPlayer, inp.command, CLIENT_TICK_RATE, mapId);
+              });
+            }
+          }
+
+          // Clean up old history
+          for (const key of predictionHistory.keys()) {
+            if (key < ackSeq) {
+              predictionHistory.delete(key);
+            }
+          }
+
+          (localPlayer as any).serverPosition = null;
         }
 
-        if (engine.isHost) {
-          const syncBots = engine.pilots
-            .filter(p => p.isBot)
-            .map(b => {
-              const bd = b.damage;
-              return {
-                id: b.id,
-                x: Math.round(b.x * 10) / 10,
-                y: Math.round(b.y * 10) / 10,
-                z: Math.round(b.z * 10) / 10,
-                vx: Math.round(b.vx * 100) / 100,
-                vy: Math.round(b.vy * 100) / 100,
-                vz: Math.round(b.vz * 100) / 100,
-                pitch: Math.round(b.pitch * 1000) / 1000,
-                yaw: Math.round(b.yaw * 1000) / 1000,
-                roll: Math.round(b.roll * 1000) / 1000,
-                throttle: Math.round(b.throttle * 100) / 100,
-                damage: {
-                  engine: Math.round(bd.engine * 100) / 100,
-                  leftWing: Math.round(bd.leftWing * 100) / 100,
-                  rightWing: Math.round(bd.rightWing * 100) / 100,
-                  tail: Math.round(bd.tail * 100) / 100,
-                  cockpit: Math.round(bd.cockpit * 100) / 100,
-                  fuelTank: Math.round(bd.fuelTank * 100) / 100,
-                  fuselage: Math.round(bd.fuselage * 100) / 100,
-                  hasFire: bd.hasFire,
-                  hasOilLeak: bd.hasOilLeak
-                }
-              };
-            });
+        // 2. Fixed-tick simulation loop (Input queue & prediction step)
+        clientAccumulator += dt;
+        if (clientAccumulator > 0.1) clientAccumulator = 0.1; // clamp to avoid death spiral
 
-          const botsPayload = JSON.stringify({ type: "bots_updated", bots: syncBots });
-          const scorePayload = JSON.stringify({
-            type: "scores_updated",
-            team1Score: engine.team1Score,
-            team2Score: engine.team2Score,
-            matchTimer: Math.round(engine.matchTimer * 10) / 10
+        while (clientAccumulator >= CLIENT_TICK_RATE) {
+          clientTickSeq++;
+
+          const controller = engine.getOrCreateController(localPlayer.id);
+          const command = controller.update(localPlayer, inputFrame, playerTargetPoint, CLIENT_TICK_RATE);
+          localPlayer.lastCommand = command;
+
+          pendingInputs.push({ seq: clientTickSeq, command });
+
+          // Run deterministic local physics step
+          FlightPhysicsEngine.update(localPlayer, command, CLIENT_TICK_RATE, mapId);
+          engine.enforceMapBoundary(localPlayer, CLIENT_TICK_RATE);
+
+          // Save prediction history
+          predictionHistory.set(clientTickSeq, {
+            position: new Vector3(localPlayer.x, localPlayer.y, localPlayer.z),
+            velocity: new Vector3(localPlayer.vx, localPlayer.vy, localPlayer.vz),
+            pitch: localPlayer.pitch,
+            yaw: localPlayer.yaw,
+            roll: localPlayer.roll
           });
 
-          if (socketRef.current?.readyState === WebSocket.OPEN) {
-            socketRef.current.send(JSON.stringify({ type: "bots_sync", bots: syncBots }));
-            socketRef.current.send(JSON.stringify({
-              type: "score_sync",
-              team1Score: engine.team1Score,
-              team2Score: engine.team2Score,
-              matchTimer: Math.round(engine.matchTimer * 10) / 10
-            }));
+          // Send compact input tuple to server
+          if (roomRef.current) {
+            const boostVal = command.boost ? 1 : 0;
+            const brakeVal = command.airbrake ? 1 : 0;
+            const primVal = command.primaryFire ? 1 : 0;
+            const secVal = command.secondaryFire ? 1 : 0;
+            const flapsCode = command.flaps === "landing" ? 2 : command.flaps === "combat" ? 1 : 0;
+            const gearVal = command.gearDeployed ? 1 : 0;
+
+            const inputTuple = [
+              clientTickSeq,
+              command.pitch,
+              command.roll,
+              command.yaw,
+              command.throttleDelta,
+              boostVal,
+              brakeVal,
+              primVal,
+              secVal,
+              flapsCode,
+              gearVal
+            ];
+            roomRef.current.send("input", inputTuple);
           }
 
-          dataChansRef.current.forEach(dc => {
-            if (dc.readyState === "open") {
-              dc.send(botsPayload);
-              dc.send(scorePayload);
-            }
-          });
+          clientAccumulator -= CLIENT_TICK_RATE;
         }
       }
 
@@ -760,7 +742,7 @@ export default function App() {
   const handleMatchCompletion = (
     victory: boolean,
     xpEarned: number,
-    engine: GameEngine,
+    engine: MatchSimulation,
     _renderer3D: WorldRenderer
   ) => {
     const player = engine.pilots.find(p => p.id === "player");
