@@ -118,6 +118,10 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
   // Position history for lag compensation (playerId -> HistoricalTransform[])
   private playerHistory = new Map<string, HistoricalTransform[]>();
 
+  // Fractional score accumulators for capture zone ticking
+  private team1FractionalScore = 0;
+  private team2FractionalScore = 0;
+
   async onCreate(options: any) {
     this.autoDispose = false;
     this.setState(new MatchState());
@@ -426,8 +430,21 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
       this.skyZones,
       Array.from(this.pilots.values()),
       (team, amt) => {
-        if (team === 1) this.state.team1Score = Math.floor(this.state.team1Score + amt);
-        else if (team === 2) this.state.team2Score = Math.floor(this.state.team2Score + amt);
+        if (team === 1) {
+          this.team1FractionalScore += amt;
+          const integerPart = Math.floor(this.team1FractionalScore);
+          if (integerPart > 0) {
+            this.state.team1Score += integerPart;
+            this.team1FractionalScore -= integerPart;
+          }
+        } else if (team === 2) {
+          this.team2FractionalScore += amt;
+          const integerPart = Math.floor(this.team2FractionalScore);
+          if (integerPart > 0) {
+            this.state.team2Score += integerPart;
+            this.team2FractionalScore -= integerPart;
+          }
+        }
       },
       true,
       true

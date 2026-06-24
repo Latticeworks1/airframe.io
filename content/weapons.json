@@ -1,8 +1,0 @@
-{
-  "7.7mm MG":     { "damage": 6,   "fireRate": 16,  "muzzleVelocity": 820, "ammoCapacity": 1200, "burstCount": 3, "dispersion": 0.015, "soundType": "fast" },
-  "12.7mm HMG":   { "damage": 13,  "fireRate": 11,  "muzzleVelocity": 880, "ammoCapacity": 600,  "burstCount": 2, "dispersion": 0.01,  "soundType": "heavy" },
-  "20mm Cannon":  { "damage": 32,  "fireRate": 8,   "muzzleVelocity": 760, "ammoCapacity": 240,  "burstCount": 1, "dispersion": 0.008, "soundType": "cannon_light" },
-  "30mm Cannon":  { "damage": 85,  "fireRate": 5,   "muzzleVelocity": 610, "ammoCapacity": 90,   "burstCount": 1, "dispersion": 0.012, "soundType": "cannon_heavy" },
-  "Rockets":      { "damage": 180, "fireRate": 1.5, "muzzleVelocity": 420, "ammoCapacity": 12,   "burstCount": 1, "dispersion": 0.02,  "soundType": "rocket" },
-  "Small Bombs":  { "damage": 350, "fireRate": 0.8, "muzzleVelocity": 15,  "ammoCapacity": 4,    "burstCount": 1, "dispersion": 0.03,  "soundType": "bomb" }
-}

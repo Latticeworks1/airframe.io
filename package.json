@@ -13,9 +13,11 @@
     "telemetry:report": "node tools/telemetry-report.mjs",
     "bake-maps": "tsx tools/bake-maps.ts",
     "bake-cockpit": "tsx tools/bake-cockpit-components.ts",
-    "test": "npm run test:voxel && npm run test:convergence",
+    "test": "npm run test:voxel && npm run test:convergence && npm run test:cockpit && npm run test:multiplayer",
     "test:voxel": "node --import tsx/esm src/game/voxelMesh.test.ts",
-    "test:convergence": "node --import tsx/esm src/game/projectileConvergence.test.ts"
+    "test:convergence": "node --import tsx/esm src/game/projectileConvergence.test.ts",
+    "test:cockpit": "node --import tsx/esm src/game/cockpitValidation.test.ts",
+    "test:multiplayer": "node --import tsx/esm src/game/MultiplayerRoom.test.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.17.44",

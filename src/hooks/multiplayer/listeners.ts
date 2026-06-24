@@ -1,6 +1,6 @@
 import React from "react";
 import { Vector3, Quaternion, Euler } from "three";
-import { Room } from "@colyseus/sdk";
+import { Room, getStateCallbacks } from "@colyseus/sdk";
 import { ChatMessage, MultiplayerMatchContext } from "./types";
 import { DEFAULT_AIRCRAFT } from "../../game/aircraftData";
 import { Pilot, AmmoBelt, WeaponType } from "../../types";
@@ -35,59 +35,57 @@ export function setupRoomListeners(
   setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
   onLocalPlayerHit: (tgtId: string, isGround: boolean) => void
 ) {
-  let listenersRegistered = false;
-
   // Sync Colyseus room state
   room.onStateChange(safeWrap((state) => {
     engine.team1Score = state.team1Score;
     engine.team2Score = state.team2Score;
     engine.matchTimer = state.matchTimer;
     engine.matchEnded = state.matchEnded;
-
-    if (!listenersRegistered && state.players) {
-      listenersRegistered = true;
-
-      // Sync player entries in Colyseus schema
-      state.players.onAdd(safeWrap((player: any, key: string) => {
-        if (key === room.sessionId) return; // ignore local player
-
-        const existing = engine.pilots.find((p) => p.id === key);
-        if (!existing) {
-          const specs = DEFAULT_AIRCRAFT.find((a) => a.id === player.aircraftId) || DEFAULT_AIRCRAFT[0];
-          const newPilot = new Pilot({
-            id: key,
-            name: player.name,
-            isBot: player.isBot,
-            team: player.team as 1 | 2,
-            aircraftId: player.aircraftId,
-            specs,
-            x: 0, y: 350, z: 0,
-            vx: 0, vy: 0, vz: 0,
-            pitch: 0, yaw: 0, roll: 0,
-            throttle: 0.8,
-            engineTemperature: 75,
-            damage: {
-              engine: 1.0, leftWing: 1.0, rightWing: 1.0, tail: 1.0,
-              cockpit: 1.0, fuelTank: 1.0, fuselage: 1.0,
-              hasFire: false, hasOilLeak: false
-            },
-            ammo: {} as Record<WeaponType, number>,
-            ammoBelt: AmmoBelt.Universal,
-            modifications: [],
-            score: player.score,
-            kills: player.kills,
-            deaths: player.deaths,
-            xpEarned: 0
-          });
-          engine.pilots.push(newPilot);
-        }
-      }, "state.players.onAdd"));
-
-      state.players.onRemove(safeWrap((player: any, key: string) => {
-        engine.pilots = engine.pilots.filter((p) => p.id !== key);
-      }, "state.players.onRemove"));
-    }
   }, "onStateChange"));
+
+  // Register collection listeners using schema callbacks proxy
+  const $ = getStateCallbacks(room);
+  if ($) {
+    const stateProxy = $(room.state);
+    stateProxy.players.onAdd(safeWrap((player: any, key: string) => {
+      if (key === room.sessionId) return; // ignore local player
+
+      const existing = engine.pilots.find((p) => p.id === key);
+      if (!existing) {
+        const specs = DEFAULT_AIRCRAFT.find((a) => a.id === player.aircraftId) || DEFAULT_AIRCRAFT[0];
+        const newPilot = new Pilot({
+          id: key,
+          name: player.name,
+          isBot: player.isBot,
+          team: player.team as 1 | 2,
+          aircraftId: player.aircraftId,
+          specs,
+          x: 0, y: 350, z: 0,
+          vx: 0, vy: 0, vz: 0,
+          pitch: 0, yaw: 0, roll: 0,
+          throttle: 0.8,
+          engineTemperature: 75,
+          damage: {
+            engine: 1.0, leftWing: 1.0, rightWing: 1.0, tail: 1.0,
+            cockpit: 1.0, fuelTank: 1.0, fuselage: 1.0,
+            hasFire: false, hasOilLeak: false
+          },
+          ammo: {} as Record<WeaponType, number>,
+          ammoBelt: AmmoBelt.Universal,
+          modifications: [],
+          score: player.score,
+          kills: player.kills,
+          deaths: player.deaths,
+          xpEarned: 0
+        });
+        engine.pilots.push(newPilot);
+      }
+    }, "stateProxy.players.onAdd"));
+
+    stateProxy.players.onRemove(safeWrap((player: any, key: string) => {
+      engine.pilots = engine.pilots.filter((p) => p.id !== key);
+    }, "stateProxy.players.onRemove"));
+  }
 
   // Listen for messages
   room.onMessage("chat", safeWrap(([_tick, _senderId, senderName, text]) => {
