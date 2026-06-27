@@ -114,7 +114,7 @@ export class MatchSimulation {
 
   public isMultiplayer = false;
   public isHost = false;
-  private _dtSmooth: number | undefined = undefined;
+  private _physicsAccumulator = 0;
   public onProjectileSpawn?: (type: WeaponType) => void;
   public onProjectileImpact?: (
     type: WeaponType,
@@ -561,18 +561,15 @@ export class MatchSimulation {
       return;
     }
 
-    // Adaptive physics rate: track a simple rolling average of dt and scale the
-    // sub-step ceiling up when the GPU is clearly overloaded (sustained >20ms
-    // frames). This keeps the physics loop from consuming most of the frame
-    // budget and allows the renderer to catch up. Minimum is 50Hz (0.02s).
-    this._dtSmooth = this._dtSmooth === undefined
-      ? dt
-      : this._dtSmooth * 0.95 + dt * 0.05;
-    const maxSubStep = Math.min(0.02, Math.max(0.01, this._dtSmooth * 0.5));
-    let timeLeft = Math.min(0.1, dt); // clamp total dt to guard against death spiral
+    // Fixed 60 Hz physics step. The accumulator carries the sub-step residual
+    // forward rather than integrating it immediately, which prevents the
+    // alternating 1-step/2-step pattern that causes visual jitter at 60 fps.
+    const FIXED_STEP = 1 / 60;
+    this._physicsAccumulator = Math.min(this._physicsAccumulator + dt, 0.1);
 
-    while (timeLeft > 0) {
-      const step = Math.min(maxSubStep, timeLeft);
+    while (this._physicsAccumulator >= FIXED_STEP) {
+      const step = FIXED_STEP;
+      this._physicsAccumulator -= FIXED_STEP;
 
       this.tickPilotCooldowns(step);
 
@@ -643,7 +640,6 @@ export class MatchSimulation {
         this.updateCaptureZones(step);
       }
 
-      timeLeft -= step;
     }
 
     this.updateCampaignMission();

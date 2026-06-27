@@ -369,6 +369,12 @@ export function useGameEngine(
 
     const _netQ = new Quaternion();
     const _netQSnap = new Quaternion();
+    // Scratch objects for the hot loop — never allocate inside loop().
+    const _loopPos = new Vector3();
+    const _loopRot = new Quaternion();
+    const _loopFwd = new Vector3();
+    const _loopUp = new Vector3();
+    const _loopRight = new Vector3();
 
     let clientTickSeq = 0;
     let clientAccumulator = 0;
@@ -383,11 +389,11 @@ export function useGameEngine(
 
       const localPlayer = engine.pilots.find(p => p.id === "player");
       if (localPlayer && localPlayer.damage.fuselage > 0) {
-        const pos = new Vector3(localPlayer.x, localPlayer.y, localPlayer.z);
-        const rot = new Quaternion(localPlayer.qx, localPlayer.qy, localPlayer.qz, localPlayer.qw);
-        const forward = new Vector3(0, 0, 1).applyQuaternion(rot).normalize();
-        const up = new Vector3(0, 1, 0).applyQuaternion(rot).normalize();
-        const right = new Vector3(1, 0, 0).applyQuaternion(rot).normalize();
+        const pos = _loopPos.set(localPlayer.x, localPlayer.y, localPlayer.z);
+        const rot = _loopRot.set(localPlayer.qx, localPlayer.qy, localPlayer.qz, localPlayer.qw);
+        const forward = _loopFwd.set(0, 0, 1).applyQuaternion(rot).normalize();
+        const up = _loopUp.set(0, 1, 0).applyQuaternion(rot).normalize();
+        const right = _loopRight.set(1, 0, 0).applyQuaternion(rot).normalize();
 
         const pitchMultiplier = progression.invertMouseY ? -1 : 1;
         const rollMultiplier = progression.invertMouseX ? -1 : 1;
