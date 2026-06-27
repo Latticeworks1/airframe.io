@@ -10,6 +10,7 @@ export class SnapshotSystem {
     team1Score: number,
     team2Score: number,
     matchTimer: number,
+    lastSeqs: Record<string, number>,
     broadcastFn: (type: string, payload: any) => void
   ) {
     const entitiesArray: any[] = [];
@@ -71,6 +72,7 @@ export class SnapshotSystem {
 
     const payload = [
       serverTick,
+      lastSeqs,
       entitiesArray,
       team1Score,
       team2Score,

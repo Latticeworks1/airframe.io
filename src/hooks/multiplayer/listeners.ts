@@ -94,8 +94,17 @@ export function setupRoomListeners(
     ]);
   }, "onMessage:chat"));
 
-  room.onMessage("snapshot", safeWrap(([tick, lastSeqs, entities]) => {
-    const mySeq = lastSeqs[room.sessionId];
+  room.onMessage("snapshot", safeWrap(([tick, lastSeqs, entities, team1Score, team2Score, matchTimer, skyZones]) => {
+    const mySeq = lastSeqs?.[room.sessionId] ?? 0;
+    if (typeof team1Score === "number") engine.team1Score = team1Score;
+    if (typeof team2Score === "number") engine.team2Score = team2Score;
+    if (typeof matchTimer === "number") engine.matchTimer = matchTimer;
+    if (Array.isArray(skyZones)) {
+      for (const [id, owningTeam, captureProgress] of skyZones) {
+        const zone = engine.skyZones.find(z => z.id === id);
+        if (zone) { zone.owningTeam = owningTeam; zone.captureProgress = captureProgress; }
+      }
+    }
 
     entities.forEach((entity: any) => {
       const [id, kind] = entity;

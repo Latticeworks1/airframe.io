@@ -129,7 +129,9 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
     );
 
     if (this.serverTick % 2 === 0) {
-      this.snapSys.broadcastSnapshot(this.serverTick, this.pilots, this.projectiles, this.groundTargets, this.skyZones, this.state.team1Score, this.state.team2Score, this.matchTimer, (t, m) => this.broadcast(t, m));
+      const lastSeqs: Record<string, number> = {};
+      this.state.players.forEach((p: any, id: string) => { lastSeqs[id] = p.lastProcessedSeq ?? 0; });
+      this.snapSys.broadcastSnapshot(this.serverTick, this.pilots, this.projectiles, this.groundTargets, this.skyZones, this.state.team1Score, this.state.team2Score, this.matchTimer, lastSeqs, (t, m) => this.broadcast(t, m));
     }
   }
 
