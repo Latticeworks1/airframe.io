@@ -8,7 +8,7 @@ export const map: MapDefinition = {
   cloudDensity: 0.9,
   world:    { radius: 18000, waterHeight: 10, defaultGroundHeight: 10, maxAltitude: 12000 },
   spawn:    { distMin: 10000, distMax: 13000, aglMin: 400,  aglMax: 900,  initialSpeedMs: 135, spreadZ: 1000 },
-  terrain:  { kind: "heightmap" as const, path: "/maps/storm-front.png", elevationScale: 700 },
+  terrain:  { kind: "heightmap" as const, path: "/maps/storm-front.png", elevationScale: 100 },
   layout:   { carriers: [
     { structureId: "carrier-nimitz", x: -12000, z: -9000, rotationY: Math.PI / 4 },
     { structureId: "carrier-nimitz", x:  12000, z:  9000, rotationY: -3 * Math.PI / 4 },

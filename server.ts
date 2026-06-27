@@ -13,14 +13,26 @@ async function startServer() {
   const PORT = parseInt(process.env.PORT ?? "7860", 10);
   const server = http.createServer(app);
 
-  // Initialize Colyseus game server
+  // Initialize Colyseus game server with keepalive pings so the HF proxy
+  // does not terminate idle WebSocket connections.
   const gameServer = new Server({
-    transport: new WebSocketTransport({ server })
+    transport: new WebSocketTransport({ server, pingInterval: 8000, pingMaxRetries: 3 })
   });
   gameServer.define("air_combat", MultiplayerRoom);
 
-  // Bind matchmaking and HTTP routes to the server without breaking Express body-parser
-  (gameServer as any).bindRoutes();
+  // Mount Colyseus matchmaking routes (/matchmake/*) onto this Express app.
+  // In Colyseus 0.17 the transport owns an internal express router; exposing it
+  // here is the documented way to share an existing http.Server.
+  const colyseusApp =
+    (gameServer as any).expressApp ??
+    (gameServer as any).transport?.expressApp ??
+    null;
+  if (colyseusApp) {
+    app.use("/", colyseusApp);
+  } else {
+    console.warn("[Server] gameServer.expressApp unavailable — matchmaking routes may not be registered");
+    (gameServer as any).bindRoutes?.();
+  }
 
   // Authoritative progression save directory
   const saveDir = existsSync("/data") ? "/data/saves" : path.join(process.cwd(), "saves");

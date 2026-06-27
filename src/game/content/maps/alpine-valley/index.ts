@@ -8,7 +8,7 @@ export const map: MapDefinition = {
   cloudDensity: 0.4,
   world:    { radius: 18000, waterHeight: 10, defaultGroundHeight: 10, maxAltitude: 12000 },
   spawn:    { distMin: 12000, distMax: 15000, aglMin: 600,  aglMax: 1200, initialSpeedMs: 160, spreadZ: 800 },
-  terrain:  { kind: "heightmap" as const, path: "/maps/alpine-valley.png", elevationScale: 2800 },
+  terrain:  { kind: "heightmap" as const, path: "/maps/alpine-valley.png", elevationScale: 4200 },
   layout:   { carriers: [], hasThunder: false, antiAirCount: 16, groundTargetsCount: 24 },
   visual:   { skyColor: "#7dd3fc", fogColor: "#f1f5f9", groundColor: "#475569" },
   palette:  { base: "#1e293b", colors: ["#f8fafc","#f1f5f9","#e2e8f0","#cbd5e1","#94a3b8","#64748b","#475569","#0f172a"], roadColor: "rgba(100, 116, 139, 0.3)" },

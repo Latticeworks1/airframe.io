@@ -1,6 +1,6 @@
 import React from "react";
 import { Vector3, Quaternion, Euler } from "three";
-import { Room, getStateCallbacks } from "@colyseus/sdk";
+import { Room, Callbacks } from "@colyseus/sdk";
 import { ChatMessage, MultiplayerMatchContext } from "./types";
 import { DEFAULT_AIRCRAFT } from "../../game/aircraftData";
 import { Pilot, AmmoBelt, WeaponType } from "../../types";
@@ -43,11 +43,10 @@ export function setupRoomListeners(
     engine.matchEnded = state.matchEnded;
   }, "onStateChange"));
 
-  // Register collection listeners using schema callbacks proxy
-  const $ = getStateCallbacks(room);
-  if ($) {
-    const stateProxy = $(room.state);
-    stateProxy.players.onAdd(safeWrap((player: any, key: string) => {
+  // Register collection listeners using schema Callbacks utility
+  const callbacks = Callbacks.get(room);
+  if (callbacks) {
+    callbacks.onAdd("players", safeWrap((player: any, key: string) => {
       if (key === room.sessionId) return; // ignore local player
 
       const existing = engine.pilots.find((p) => p.id === key);
@@ -80,11 +79,11 @@ export function setupRoomListeners(
         });
         engine.pilots.push(newPilot);
       }
-    }, "stateProxy.players.onAdd"));
+    }, "callbacks.onAdd:players"));
 
-    stateProxy.players.onRemove(safeWrap((player: any, key: string) => {
+    callbacks.onRemove("players", safeWrap((player: any, key: string) => {
       engine.pilots = engine.pilots.filter((p) => p.id !== key);
-    }, "stateProxy.players.onRemove"));
+    }, "callbacks.onRemove:players"));
   }
 
   // Listen for messages

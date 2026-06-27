@@ -8,7 +8,7 @@ export const map: MapDefinition = {
   cloudDensity: 0.65,
   world:    { radius: 32000, waterHeight: 10, defaultGroundHeight: 10, maxAltitude: 14000 },
   spawn:    { distMin: 20000, distMax: 26000, aglMin: 500, aglMax: 1200, initialSpeedMs: 145, spreadZ: 6000 },
-  terrain:  { kind: "heightmap" as const, path: "/maps/island-chain.png", elevationScale: 700 },
+  terrain:  { kind: "heightmap" as const, path: "/maps/island-chain.png", elevationScale: 1300 },
   layout:   { carriers: [
     { structureId: "carrier-nimitz", x: -20000, z: -14000, rotationY: Math.PI / 4 },
     { structureId: "carrier-nimitz", x:  20000, z:  14000, rotationY: -3 * Math.PI / 4 },

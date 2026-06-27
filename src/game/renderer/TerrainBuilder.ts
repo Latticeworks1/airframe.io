@@ -9,6 +9,7 @@ import { MapDefinition, BakedMapGeometry } from "../content/maps/mapTypes";
 import { getTerrainLayout, loadHeightmap, sampleHeightmapAt } from "../terrainModel";
 import { renderMapGeometry, renderPaletteFallback } from "../mapGeometryRenderer";
 import { ScatterRenderer } from "../scatterRenderer";
+import { buildGlbCollider } from "../terrainCollider";
 
 function createWaterNormalMap(): THREE.CanvasTexture {
   const size = 256;
@@ -191,6 +192,7 @@ export class TerrainBuilder {
         });
         this.scene.add(gltf.scene);
         this.islands.push(...(gltf.scene.children as THREE.Mesh[]));
+        buildGlbCollider(gltf.scene, this.mapDef.id, this.mapDef.world.radius, this.mapDef.world.maxAltitude);
       });
     } else if (def.kind === "tiled-glb") {
       // Tile manager handles loading in updateTiles

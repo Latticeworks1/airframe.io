@@ -70,17 +70,18 @@ export function useMultiplayer() {
         setupRoomListeners(room, engine, setChatMessages, onLocalPlayerHit);
       })
       .catch((err) => {
-        console.error("[Multiplayer] Join failed:", err);
+        const reason: string = err?.message || String(err);
+        console.error("[Multiplayer] Join failed:", reason, err);
         fetch("/api/client-error", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             context: "connectMultiplayer.catch",
-            message: err?.message || String(err),
+            message: reason,
             stack: err?.stack || ""
           })
         }).catch(() => {});
-        onMatchRejected("connection_failed");
+        onMatchRejected(reason);
       });
 
       // Bind local player shoots callback to nothing on server auth

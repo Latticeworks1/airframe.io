@@ -15,6 +15,8 @@ import {
   GroundTarget,
 } from "../types";
 import { Zap, MapPin } from "lucide-react";
+import { MAP_REGISTRY } from "../game/content/maps/registry";
+import { MapFrame } from "../game/mapFrame";
 import { CenterReticle } from "./hud/CenterReticle";
 import { BombSightOverlay } from "./hud/BombSightOverlay";
 import { TacticalMapOverlay } from "./hud/TacticalMapOverlay";
@@ -110,6 +112,8 @@ export const GameHUD: React.FC<HUDProps> = ({
 
   const altitudeM = Math.floor(playerPilot.y);
   const throttlePercent = Math.floor(playerPilot.throttle * 100);
+  const mapDef = MAP_REGISTRY[mapId];
+  const playerLatLon = mapDef ? new MapFrame(mapDef.tileOrigin).gameXZtoLatLon(playerPilot.x, playerPilot.z) : null;
 
   const isStalling = speedKmph < playerPilot.specs.stallSpeedKmph;
   const isOverspeed =
@@ -277,6 +281,20 @@ export const GameHUD: React.FC<HUDProps> = ({
             {throttlePercent}% {playerPilot.throttle > 1.0 ? "WEP" : ""}
           </span>
         </div>
+
+        {playerLatLon && (
+          <div className="flex flex-col">
+            <span className="text-[9.5px] text-amber-400 uppercase leading-none" style={textOutline(1)}>
+              POS
+            </span>
+            <span className="text-[10px] font-black leading-none text-white mt-0.5 font-mono" style={textOutline(1)}>
+              {Math.abs(playerLatLon.lat).toFixed(4)}{playerLatLon.lat >= 0 ? "N" : "S"}
+            </span>
+            <span className="text-[10px] font-black leading-none text-white font-mono" style={textOutline(1)}>
+              {Math.abs(playerLatLon.lon).toFixed(4)}{playerLatLon.lon >= 0 ? "E" : "W"}
+            </span>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1 text-[9.5px] font-black uppercase mt-2">
           <span

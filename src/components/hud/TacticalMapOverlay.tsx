@@ -1,6 +1,7 @@
 import React from "react";
 import { Pilot, GroundTarget, SkyZone, CampaignMissionState, MatchMode } from "../../types";
 import { MAP_REGISTRY } from "../../game/content/maps/registry";
+import { MapFrame } from "../../game/mapFrame";
 
 interface TacticalMapOverlayProps {
   mapId: string;
@@ -286,6 +287,21 @@ export const TacticalMapOverlay: React.FC<TacticalMapOverlayProps> = ({
                       </div>
                     </>
                   )}
+                  {(() => {
+                    const playerOnMap = pilots.find(p => p.id === "player");
+                    if (!playerOnMap || !mapDef) return null;
+                    const pos = new MapFrame(mapDef.tileOrigin).gameXZtoLatLon(playerOnMap.x, playerOnMap.z);
+                    return (
+                      <>
+                        <div className="w-px h-8 bg-slate-800 shrink-0"/>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[7px] font-black tracking-widest text-slate-600 uppercase">Position</span>
+                          <span className="text-slate-400 font-mono">{Math.abs(pos.lat).toFixed(4)}{pos.lat >= 0 ? "N" : "S"}</span>
+                          <span className="text-slate-400 font-mono">{Math.abs(pos.lon).toFixed(4)}{pos.lon >= 0 ? "E" : "W"}</span>
+                        </div>
+                      </>
+                    );
+                  })()}
                   <div className="w-px h-8 bg-slate-800 shrink-0"/>
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[7px] font-black tracking-widest text-slate-600 uppercase">Legend</span>

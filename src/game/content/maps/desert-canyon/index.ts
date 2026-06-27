@@ -8,7 +8,7 @@ export const map: MapDefinition = {
   cloudDensity: 0.15,
   world:    { radius: 18000, waterHeight: 10, defaultGroundHeight: 10, maxAltitude: 12000 },
   spawn:    { distMin: 12000, distMax: 15000, aglMin: 800,  aglMax: 1500, initialSpeedMs: 160, spreadZ: 600 },
-  terrain:  { kind: "heightmap" as const, path: "/maps/desert-canyon.png", elevationScale: 1500 },
+  terrain:  { kind: "heightmap" as const, path: "/maps/desert-canyon.png", elevationScale: 2700 },
   layout:   { carriers: [], hasThunder: false, antiAirCount: 24, groundTargetsCount: 30 },
   visual:   { skyColor: "#fdba74", fogColor: "#ffedd5", groundColor: "#ca8a04" },
   palette:  { base: "#78350f", colors: ["#b45309","#d97706","#f59e0b","#ca8a04","#eab308","#facc15","#a16207","#854d0e"], roadColor: "rgba(254, 215, 170, 0.28)" },

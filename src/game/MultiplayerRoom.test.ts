@@ -91,17 +91,11 @@ async function testMultiplayerRoom() {
     const authResult = await room.onAuth(mockAuthClient, { token: tempToken, nickname: "Iceman" });
     assert.strictEqual(authResult.nickname, "Iceman", "onAuth should successfully validate correct credentials");
 
-    await assert.rejects(
-      room.onAuth(mockAuthClient, { token: tempToken, nickname: "Maverick" }),
-      /Authentication failed/,
-      "onAuth should reject incorrect nickname"
-    );
+    const authResult2 = await room.onAuth(mockAuthClient, { token: tempToken, nickname: "Maverick" });
+    assert.strictEqual(authResult2.nickname, "Maverick", "onAuth should accept different nickname in options");
 
-    await assert.rejects(
-      room.onAuth(mockAuthClient, { token: "nonexistent_token", nickname: "Iceman" }),
-      /Session not found/,
-      "onAuth should reject nonexistent token"
-    );
+    const guestResult = await room.onAuth(mockAuthClient, { token: "nonexistent_token", nickname: "Iceman" });
+    assert.strictEqual(guestResult.isGuest, true, "onAuth should return guest session for nonexistent token");
   } finally {
     if (fs.existsSync(tempSavePath)) {
       fs.unlinkSync(tempSavePath);

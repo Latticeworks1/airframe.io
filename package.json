@@ -12,6 +12,7 @@
     "lint:fix": "eslint src --fix",
     "telemetry:report": "node tools/telemetry-report.mjs",
     "bake-maps": "tsx tools/bake-maps.ts",
+    "bake-terrain": "tsx tools/bake-terrain.ts",
     "bake-cockpit": "tsx tools/bake-cockpit-components.ts",
     "test": "npm run test:voxel && npm run test:convergence && npm run test:cockpit && npm run test:multiplayer",
     "test:voxel": "node --import tsx/esm src/game/voxelMesh.test.ts",
@@ -21,7 +22,7 @@
   },
   "dependencies": {
     "@colyseus/core": "^0.17.44",
-    "@colyseus/schema": "^4.0.26",
+    "@colyseus/schema": "~4.0.26",
     "@colyseus/sdk": "^0.17.43",
     "@colyseus/ws-transport": "^0.17.13",
     "@dimforge/rapier3d-compat": "^0.19.3",
@@ -53,7 +54,6 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "typescript-eslint": "^8.61.1",
-    "vite": "^6.2.3"
+    "typescript-eslint": "^8.61.1"
   }
 }

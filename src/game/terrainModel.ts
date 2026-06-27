@@ -99,6 +99,10 @@ export function getHeightmapData(path: string): HeightmapData | undefined {
   return heightmapCache.get(path);
 }
 
+export function registerHeightmap(key: string, data: HeightmapData): void {
+  heightmapCache.set(key, data);
+}
+
 export interface TerrainBlock {
   id: string;
   position: [number, number, number];
@@ -307,6 +311,15 @@ export function getTerrainHeight(x: number, z: number, mapId: string): { height:
       const raw = sampleHeightmapAt(data, x, z);
       const h = Math.max(raw, mapDef.world.waterHeight);
       return { height: h, isAirfield: false };
+    }
+    return { height: mapDef.world.defaultGroundHeight, isAirfield: false };
+  }
+
+  if (mapDef.terrain.kind === "glb") {
+    const data = getHeightmapData(mapId);
+    if (data) {
+      const raw = sampleHeightmapAt(data, x, z);
+      return { height: Math.max(raw, mapDef.world.waterHeight), isAirfield: false };
     }
     return { height: mapDef.world.defaultGroundHeight, isAirfield: false };
   }

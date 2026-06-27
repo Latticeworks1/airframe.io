@@ -171,23 +171,35 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
     if (!token || typeof token !== "string" || token.length > 128) {
       throw new Error("Invalid session token");
     }
-    
+
     const saveDir = fs.existsSync("/data") ? "/data/saves" : path.join(process.cwd(), "saves");
     const filePath = path.join(saveDir, `${token}.json`);
+
+    // On ephemeral deployments (HuggingFace Spaces) the save directory is reset
+    // on every container restart. Allow joining with the options data as a guest
+    // rather than hard-rejecting returning players whose session file no longer exists.
     if (!fs.existsSync(filePath)) {
-      throw new Error("Session not found");
+      console.warn(`[Auth] No save for token ${token.slice(0, 8)}… — guest session`);
+      return {
+        nickname: nickname || "Pilot",
+        selectedPlaneId: options.aircraftId || "falcon-mk2",
+        isGuest: true
+      };
     }
-    
+
     try {
       const raw = fs.readFileSync(filePath, "utf-8");
       const save = JSON.parse(raw);
-      if (save.nickname !== nickname) {
-        throw new Error("Nickname mismatch");
-      }
-      return save;
+      // Accept nickname from options so a player who changed it without re-registering
+      // is not blocked; the canonical name lives in the save for history only.
+      return { ...save, nickname: nickname || save.nickname };
     } catch (err) {
       console.error(`onAuth validation failed for ${token}:`, err);
-      throw new Error("Authentication failed", { cause: err });
+      return {
+        nickname: nickname || "Pilot",
+        selectedPlaneId: options.aircraftId || "falcon-mk2",
+        isGuest: true
+      };
     }
   }
 
@@ -1046,19 +1058,26 @@ export class MultiplayerRoom extends Room<{ state: MatchState }> {
   // ---- Private Helpers ----
 
   private buildObjectives() {
+    const mapDef = MAP_REGISTRY[this.mapId];
+    const sp = mapDef?.spawn ?? { distMin: 3500 };
+    // All objective positions were authored for a spawn distance of 3500m.
+    // Scale them proportionally so objectives sit at the same relative position
+    // between the two team spawns regardless of actual map size.
+    const k = (sp.distMin ?? 3500) / 3500;
+
     this.skyZones.push(
-      { id: "zone-a", name: "Alpha Zone", x: -1200, y: 500, z: -500, radius: 450, owningTeam: 0, captureProgress: 0 },
-      { id: "zone-b", name: "Bravo Zone", x: 0, y: 700, z: 0, radius: 600, owningTeam: 0, captureProgress: 0 },
-      { id: "zone-c", name: "Charlie Zone", x: 1200, y: 500, z: 500, radius: 450, owningTeam: 0, captureProgress: 0 }
+      { id: "zone-a", name: "Alpha Zone", x: -1200 * k, y: 500, z: -500 * k, radius: 450 * k, owningTeam: 0, captureProgress: 0 },
+      { id: "zone-b", name: "Bravo Zone", x: 0, y: 700, z: 0, radius: 600 * k, owningTeam: 0, captureProgress: 0 },
+      { id: "zone-c", name: "Charlie Zone", x: 1200 * k, y: 500, z: 500 * k, radius: 450 * k, owningTeam: 0, captureProgress: 0 }
     );
 
     const islandLocations = [
-      { x: -2000, z: -1000 },
-      { x: -500, z: -2500 },
-      { x: 1800, z: -800 },
-      { x: 300, z: 1600 },
-      { x: -1100, z: 2400 },
-      { x: 2200, z: 2000 }
+      { x: -2000 * k, z: -1000 * k },
+      { x:  -500 * k, z: -2500 * k },
+      { x:  1800 * k, z:  -800 * k },
+      { x:   300 * k, z:  1600 * k },
+      { x: -1100 * k, z:  2400 * k },
+      { x:  2200 * k, z:  2000 * k }
     ];
 
     islandLocations.forEach((loc, index) => {
