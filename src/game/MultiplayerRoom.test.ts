@@ -454,8 +454,52 @@ async function testMultiplayerRoom() {
   const damageAppliedInc = 1.0 - destructible(victimP.entity).damageModel!.rightWing;
   assert.ok(damageAppliedAP > damageAppliedInc, "Armor-piercing belt should deal more damage than Incendiary belt");
 
-  // Clean up victim
+  // 10.3 Test PvP Scoring (Lethal damage)
+  console.log("[*] Testing PvP scoring and lethal damage...");
+  const initialKills = playerPilot.kills;
+  const initialScore = playerPilot.score;
+  const initialDeaths = victimP.deaths;
+  const initialTeamScore = room.state.team1Score;
+  
+  const pvpbroadcasts: any[] = [];
+  const originalBroadcast = room.broadcast;
+  room.broadcast = (type: any, msg: any) => pvpbroadcasts.push({ type, msg });
+  
+  // Directly register a kill to test scoring logic (collision mapping is tested above)
+  (room as any).registerKill("player_session_1", "victim_test", "CANNON_30");
+  
+  assert.strictEqual(playerPilot.kills, initialKills + 1, "Killer should gain 1 kill");
+  assert.strictEqual(playerPilot.score, initialScore + 300, "Killer should gain 300 score points");
+  assert.strictEqual(victimP.deaths, initialDeaths + 1, "Victim should gain 1 death");
+  assert.strictEqual(room.state.team1Score, initialTeamScore + 100, "Killer's team should gain 100 team points");
+  
+  const killConfirmedBroadcast = pvpbroadcasts.find(m => m.type === "kill_confirmed");
+  assert.ok(killConfirmedBroadcast, "kill_confirmed event must be broadcasted");
+  assert.strictEqual(killConfirmedBroadcast.msg.killerId, "player_session_1", "Broadcast should have correct killer");
+  assert.strictEqual(killConfirmedBroadcast.msg.victimId, "victim_test", "Broadcast should have correct victim");
+
+  // Verify Victim Respawn
+  // registerKill uses setTimeout for 4s before respawning. We manually invoke it for the test.
+  (room as any).respawnPilot("victim_test");
+  assert.strictEqual(destructible(victimP.entity).damageModel!.fuselage, 1.0, "Victim fuselage should be reset to 1.0 on respawn");
+  assert.strictEqual(destructible(victimP.entity).isDead, false, "Victim should not be dead after respawn");
+  assert.strictEqual(victimP.invulnerableTimer, 2.0, "Victim should have 2.0s invulnerable timer on respawn");
+  const respawnBroadcast = pvpbroadcasts.find(m => m.type === "pilot_respawned");
+  assert.ok(respawnBroadcast, "pilot_respawned event must be broadcasted");
+
+  room.broadcast = originalBroadcast;
+
+  // 10.4 Test Disconnect cleanup (onLeave)
+  console.log("[*] Testing Disconnect cleanup (onLeave)...");
   room.onLeave(victimSocket, 4000);
+  
+  assert.strictEqual((room as any).pilots.has(victimSocket.sessionId), false, "Pilot should be removed from pilots map");
+  assert.strictEqual((room as any).rigidBodies.has(victimSocket.sessionId), false, "RigidBody should be cleaned up");
+  assert.strictEqual(room.state.players.has(victimSocket.sessionId), false, "Player should be removed from state schema");
+  
+  const leaveBroadcast = broadcastMessages.find(m => m.type === "player_left" && m.message.id === "victim_test");
+  assert.ok(leaveBroadcast, "player_left broadcast should be sent");
+
 
   // 11. Test ground target damage & splash scaling
   console.log("[*] Testing ground target damage & splash scaling...");
@@ -534,6 +578,13 @@ async function testMultiplayerRoom() {
   // 14. Test onDispose
   console.log("[*] Testing Room disposal...");
   room.onDispose();
+
+  // 15. Test Lobby Capacity (Spawning new lobbies when full)
+  console.log("[*] Testing Lobby Capacity (Spillover)...");
+  // Colyseus natively handles spawning new rooms via joinOrCreate when rooms reach maxClients.
+  // We assert that the room properly configures this threshold.
+  const capacityRoom = new MultiplayerRoom();
+  assert.strictEqual(capacityRoom.maxClients, 16, "MultiplayerRoom must have maxClients=16 to ensure Colyseus spawns new lobbies when full");
 
   console.log("[SUCCESS] All MultiplayerRoom unit tests passed.");
   process.exit(0);
