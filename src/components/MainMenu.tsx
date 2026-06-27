@@ -193,6 +193,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
   const availableTheaters = [
     { id: KnownMaps.IslandChain, mode: MatchMode.AirSupremacy },
+    { id: KnownMaps.Earth3D, mode: MatchMode.AirSupremacy },
   ];
 
   const handleCycleMap = (direction: number) => {

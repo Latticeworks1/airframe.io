@@ -45,9 +45,7 @@ export function getPlaneHitRadius(specs: AircraftSpecs): number {
 }
 
 export function getForwardVector(pilot: Pilot): THREE.Vector3 {
-  const q = new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
-  );
+  const q = new THREE.Quaternion(pilot.qx, pilot.qy, pilot.qz, pilot.qw);
   return LOCAL_FORWARD.clone().applyQuaternion(q).normalize();
 }
 

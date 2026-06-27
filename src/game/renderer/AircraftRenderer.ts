@@ -118,7 +118,7 @@ export class AircraftRenderer {
       }
 
       group.position.set(pPhys.x, pPhys.y, pPhys.z);
-      group.quaternion.setFromEuler(new THREE.Euler(pPhys.pitch, pPhys.yaw, pPhys.roll, "YXZ"));
+      group.quaternion.set(pPhys.qx, pPhys.qy, pPhys.qz, pPhys.qw);
 
       const voxState = this.voxelStateMap.get(p.id);
       if (voxState) {

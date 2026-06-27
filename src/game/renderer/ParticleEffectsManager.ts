@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { Projectile, WeaponType } from "../../types";
 import { LOCAL_FORWARD } from "../math";
+import { VolumetricFire } from "../rendering/VolumetricFire";
 
 function disposeMaterial(m: THREE.Material | THREE.Material[]) {
   if (Array.isArray(m)) {
@@ -40,6 +41,7 @@ export class ParticleEffectsManager {
 
   public smokeParticles: SmokeParticle[] = [];
   public explosionBlobs: ExplosionBlob[] = [];
+  public volumeFires: { fire: VolumetricFire, life: number }[] = [];
 
   public listProjectiles: {
     bulletId: string;
@@ -135,6 +137,13 @@ export class ParticleEffectsManager {
   public triggerExplosion(x: number, y: number, z: number, sizeMultiplier: number = 1.0) {
     const shardCount = Math.floor(16 * sizeMultiplier);
     const colors = [0xef4444, 0xf97316, 0xeab308, 0x475569];
+    
+    // Add volumetric fire for the explosion
+    const volFire = new VolumetricFire();
+    volFire.mesh.position.set(x, y, z);
+    volFire.mesh.scale.set(sizeMultiplier, sizeMultiplier, sizeMultiplier);
+    this.scene.add(volFire.mesh);
+    this.volumeFires.push({ fire: volFire, life: 1.5 });
 
     for (let i = 0; i < shardCount; i++) {
       const rx = 1.0 + Math.random() * 2 * sizeMultiplier;
@@ -171,6 +180,18 @@ export class ParticleEffectsManager {
         continue;
       }
       p.pos.addScaledVector(p.vel, dt);
+    }
+    
+    // Update Volume Fires
+    for (let i = this.volumeFires.length - 1; i >= 0; i--) {
+      const vf = this.volumeFires[i];
+      vf.life -= dt;
+      if (vf.life <= 0) {
+        this.scene.remove(vf.fire.mesh);
+        vf.fire.mesh.geometry.dispose();
+        (vf.fire.mesh.material as THREE.Material).dispose();
+        this.volumeFires.splice(i, 1);
+      }
     }
 
     // 2. Update explosion blobs

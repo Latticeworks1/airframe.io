@@ -48,9 +48,7 @@ const GROUND_EFFECT_MAX = 1.22;
 const surfaceCache = new Map<string, AeroSurface[]>();
 const inertiaCache = new Map<string, THREE.Vector3>();
 function getAircraftQuaternion(pilot: Pilot) {
-  return new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
-  );
+  return new THREE.Quaternion(pilot.qx, pilot.qy, pilot.qz, pilot.qw);
 }
 function getMach(speedMps: number, altitudeMeters: number) {
   // Simple approximation: speed of sound falls a little with altitude.

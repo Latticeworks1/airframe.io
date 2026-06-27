@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Euler, PerspectiveCamera, Quaternion, Vector3 } from "three";
+import { PerspectiveCamera, Quaternion, Vector3 } from "three";
 import { AmmoBelt, Pilot, Projectile, WeaponType } from "../types";
 import { falconMk2 } from "./content/aircraft/falcon-mk2";
 import { getCockpitDef } from "./content/aircraft/cockpitRegistry";
@@ -28,9 +28,10 @@ const pilot = new Pilot({
   vx: 37,
   vy: -4,
   vz: 112,
-  pitch: 0.17,
-  yaw: -0.43,
-  roll: 0.29,
+  qx: 0,
+  qy: 0,
+  qz: 0,
+  qw: 1,
   throttle: 1,
   engineTemperature: 80,
   damage: {
@@ -60,9 +61,7 @@ const pilot = new Pilot({
   xpEarned: 0,
 });
 
-const rotation = new Quaternion().setFromEuler(
-  new Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
-);
+const rotation = new Quaternion(pilot.qx, pilot.qy, pilot.qz, pilot.qw);
 const aircraftPosition = new Vector3(pilot.x, pilot.y, pilot.z);
 const aircraftVelocity = new Vector3(pilot.vx, pilot.vy, pilot.vz);
 let sharedTargetWorld: Vector3 | undefined;

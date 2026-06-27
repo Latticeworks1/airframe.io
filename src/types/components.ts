@@ -14,9 +14,10 @@ export interface PhysicalComponent extends Component {
   vx: number;
   vy: number;
   vz: number;
-  pitch: number;
-  roll: number;
-  yaw: number;
+  qx: number;
+  qy: number;
+  qz: number;
+  qw: number;
   avx?: number;
   avy?: number;
   avz?: number;

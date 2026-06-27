@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { setupRoomListeners } from "./listeners.js";
 import { Pilot, AmmoBelt, WeaponType } from "../../types.js";
-import { Vector3, Quaternion } from "three";
+import { Vector3 } from "three";
 
 // Mock the react state dispatch function
 const mockSetChatMessages = () => {};
@@ -161,7 +161,7 @@ async function testListeners() {
     specs: remotePilot.specs,
     x: 0, y: 0, z: 0,
     vx: 0, vy: 0, vz: 0,
-    pitch: 0, yaw: 0, roll: 0,
+    qx: 0, qy: 0, qz: 0, qw: 1,
     throttle: 0.5,
     engineTemperature: 75,
     damage: { engine: 1, leftWing: 1, rightWing: 1, tail: 1, cockpit: 1, fuelTank: 1, fuselage: 1, hasFire: false, hasOilLeak: false },

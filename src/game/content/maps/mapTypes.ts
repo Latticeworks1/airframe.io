@@ -112,7 +112,8 @@ export type TerrainGenerationDef =
   | ProceduralTerrainDef
   | { kind: "heightmap"; path: string; elevationScale: number }
   | { kind: "glb"; path: string }
-  | { kind: "tiled-glb"; tileDir: string; tileSize: number; tileGrid: number; loadRadius: number };
+  | { kind: "tiled-glb"; tileDir: string; tileSize: number; tileGrid: number; loadRadius: number }
+  | { kind: "3d-tiles"; url: string; displayActiveTiles?: boolean; errorTarget?: number };
 
 export function isProceduralTerrain(def: TerrainGenerationDef): def is ProceduralTerrainDef {
   return (
@@ -167,6 +168,7 @@ export const KnownMaps = {
   DesertCanyon: "desert-canyon",
   AlpineValley: "alpine-valley",
   StormFront:   "storm-front",
+  Earth3D:      "earth-3d",
 } as const;
 
 export type MapId = string;

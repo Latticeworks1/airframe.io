@@ -10,6 +10,10 @@ import { getTerrainLayout, loadHeightmap, sampleHeightmapAt } from "../terrainMo
 import { renderMapGeometry, renderPaletteFallback } from "../mapGeometryRenderer";
 import { ScatterRenderer } from "../scatterRenderer";
 import { buildGlbCollider } from "../terrainCollider";
+import { createTerrainMaterial } from "../rendering/TerrainMaterial";
+import { InstancedFoliage } from "../rendering/InstancedFoliage";
+import { TilesRenderer } from "3d-tiles-renderer";
+import { GoogleCloudAuthPlugin } from "3d-tiles-renderer/plugins";
 
 function createWaterNormalMap(): THREE.CanvasTexture {
   const size = 256;
@@ -70,7 +74,7 @@ export class TerrainBuilder {
   private scene: THREE.Scene;
   private mapDef: MapDefinition;
 
-  public groundMaterial: THREE.MeshLambertMaterial | null = null;
+  public groundMaterial: THREE.Material | null = null;
   public heightmapGeo: THREE.PlaneGeometry | null = null;
   public scatterRenderer: ScatterRenderer | null = null;
   public loadedTiles = new Map<string, THREE.Object3D>();
@@ -78,6 +82,8 @@ export class TerrainBuilder {
   public islands: THREE.Mesh[] = [];
   public carriers: THREE.Group[] = [];
   public waterNormalMap: THREE.CanvasTexture | null = null;
+  public grassFoliage: InstancedFoliage | null = null;
+  public tilesRenderer: TilesRenderer | null = null;
 
   constructor(scene: THREE.Scene, mapDef: MapDefinition) {
     this.scene = scene;
@@ -99,12 +105,11 @@ export class TerrainBuilder {
     const world = this.mapDef.world;
     const layout = getTerrainLayout(this.mapDef);
 
-    const landMat = new THREE.MeshLambertMaterial({
-      flatShading: true,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1
-    });
+    const landMat = createTerrainMaterial();
+    // Maintain backwards compatibility with polygonOffset for Z-fighting
+    landMat.polygonOffset = true;
+    landMat.polygonOffsetFactor = -1;
+    landMat.polygonOffsetUnits = -1;
     this.groundMaterial = landMat;
 
     const waterColor = new THREE.Color(
@@ -178,6 +183,22 @@ export class TerrainBuilder {
         }
         pos.needsUpdate = true;
         planeGeo.computeVertexNormals();
+        
+        // Scatter Grass
+        const grassCount = 10000;
+        const grassPositions: THREE.Vector3[] = [];
+        for (let i = 0; i < grassCount; i++) {
+          const gx = (Math.random() - 0.5) * world.radius * 2;
+          const gz = (Math.random() - 0.5) * world.radius * 2;
+          const gy = sampleHeightmapAt(hd, gx, gz);
+          // Only plant grass on land
+          if (gy > world.waterHeight + 1.0) {
+            grassPositions.push(new THREE.Vector3(gx, gy, gz));
+          }
+        }
+        this.grassFoliage = new InstancedFoliage(grassPositions.length, grassPositions);
+        this.scene.add(this.grassFoliage.mesh);
+        
       } catch (e) {
         console.error("Failed to load heightmap:", e);
       }
@@ -196,6 +217,25 @@ export class TerrainBuilder {
       });
     } else if (def.kind === "tiled-glb") {
       // Tile manager handles loading in updateTiles
+    } else if (def.kind === "3d-tiles") {
+      this.tilesRenderer = new TilesRenderer(def.url);
+      
+      // If the URL contains a key parameter, extract it and use the Google Cloud auth plugin
+      const urlObj = new URL(def.url);
+      const key = urlObj.searchParams.get("key");
+      if (key) {
+        this.tilesRenderer.registerPlugin(new GoogleCloudAuthPlugin({ apiToken: key }));
+      }
+
+      this.tilesRenderer.displayActiveTiles = def.displayActiveTiles ?? true;
+      this.tilesRenderer.errorTarget = def.errorTarget ?? 12.0;
+
+      // Group transformations to convert ECEF to local ENU at the target lat/lon (approximate rotation for Las Vegas origin)
+      // Since a proper ECEF to ENU matrix is complex without a math helper, we rotate -90 to get Z-up
+      this.tilesRenderer.group.rotation.x = -Math.PI / 2;
+      
+      this.scene.add(this.tilesRenderer.group);
+      this.loadedTiles.set("3d-tiles-root", this.tilesRenderer.group);
     } else {
       const groundSize = world.radius * 2;
       const landGeo = new THREE.BoxGeometry(groundSize, 12, groundSize);
@@ -263,7 +303,13 @@ export class TerrainBuilder {
     this.scatterRenderer = new ScatterRenderer(this.scene, this.mapDef, layout, geom);
   }
 
-  public updateTiles(playerX: number, playerZ: number) {
+  public updateTiles(playerX: number, playerZ: number, camera?: THREE.Camera, renderer?: any) {
+    if (this.tilesRenderer && camera && renderer) {
+      this.tilesRenderer.setCamera(camera);
+      this.tilesRenderer.setResolutionFromRenderer(camera, renderer);
+      this.tilesRenderer.update();
+    }
+
     const def = this.mapDef.terrain;
     if (def.kind !== "tiled-glb") return;
 
@@ -326,7 +372,7 @@ export class TerrainBuilder {
     if (!this.groundMaterial) return;
 
     const fallback = renderPaletteFallback(this.mapDef.palette);
-    this.groundMaterial.map = fallback;
+    (this.groundMaterial as any).map = fallback;
     this.groundMaterial.needsUpdate = true;
 
     const textureLoader = new THREE.TextureLoader();
@@ -338,7 +384,7 @@ export class TerrainBuilder {
         satTex.wrapS = THREE.ClampToEdgeWrapping;
         satTex.wrapT = THREE.ClampToEdgeWrapping;
         satTex.colorSpace = THREE.SRGBColorSpace;
-        this.groundMaterial.map = satTex;
+        (this.groundMaterial as any).map = satTex;
         this.groundMaterial.needsUpdate = true;
         fallback.dispose();
 
@@ -356,7 +402,7 @@ export class TerrainBuilder {
             const tex = renderMapGeometry(geom, this.mapDef.palette);
             tex.wrapS = THREE.ClampToEdgeWrapping;
             tex.wrapT = THREE.ClampToEdgeWrapping;
-            this.groundMaterial.map = tex;
+            (this.groundMaterial as any).map = tex;
             this.groundMaterial.needsUpdate = true;
             fallback.dispose();
             this.initScatter(geom);

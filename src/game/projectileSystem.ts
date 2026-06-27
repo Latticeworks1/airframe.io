@@ -25,9 +25,7 @@ export function getProjectileReleaseState(
   type: WeaponType,
   hardpointIndex?: number
 ): { position: Vector3; velocity: Vector3 } {
-  const rotation = new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
-  );
+  const rotation = new THREE.Quaternion(pilot.qx, pilot.qy, pilot.qz, pilot.qw);
   const spec = WEAPON_SPECS_MAP[type];
   const aircraftDef = AIRCRAFT_DEFINITIONS.find(
     definition => definition.specs.id === pilot.aircraftId
@@ -124,9 +122,7 @@ export class ProjectileSystem {
     onProjectileSpawn?: (type: WeaponType) => void,
     random: () => number = Math.random
   ) {
-    const rot = new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ")
-    );
+    const rot = new THREE.Quaternion(pilot.qx, pilot.qy, pilot.qz, pilot.qw);
 
     const spec = WEAPON_SPECS_MAP[type];
 
@@ -240,7 +236,7 @@ export class ProjectileSystem {
 
         if (distToPlaneCenter < hitRadius) {
           ProjectileSystem.rotInvTmp
-            .setFromEuler(ProjectileSystem.eulerTmp.set(tPhys.pitch, tPhys.yaw, tPhys.roll, "YXZ"))
+            .set(tPhys.qx, tPhys.qy, tPhys.qz, tPhys.qw)
             .invert();
 
           // Transform projectile segment endpoints into local aircraft space
@@ -461,8 +457,7 @@ export class ProjectileSystem {
           // Blast arrives from the epicenter direction. Transform that vector
           // to local aircraft space and clamp to wing-tip distance so the
           // impact lands on a surface voxel rather than empty space.
-          const rotInv = new THREE.Quaternion()
-            .setFromEuler(new THREE.Euler(p.pitch, p.yaw, p.roll, "YXZ"))
+          const rotInv = new THREE.Quaternion(p.qx, p.qy, p.qz, p.qw)
             .invert();
           const localDir = new Vector3(
             p.x - epicenter.x, p.y - epicenter.y, p.z - epicenter.z

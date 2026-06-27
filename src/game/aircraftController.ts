@@ -88,7 +88,7 @@ export class AircraftController {
       if (mouseTarget) {
         const pos = new Vector3(pilot.x, pilot.y, pilot.z);
 
-        const qCurrent = new Quaternion().setFromEuler(new Euler(pilot.pitch, pilot.yaw, pilot.roll, "YXZ"));
+        const qCurrent = new Quaternion(pilot.qx, pilot.qy, pilot.qz, pilot.qw);
         const forward = new Vector3(0, 0, 1).applyQuaternion(qCurrent).normalize();
         const up = new Vector3(0, 1, 0).applyQuaternion(qCurrent).normalize();
         const right = new Vector3(1, 0, 0).applyQuaternion(qCurrent).normalize();
@@ -129,7 +129,9 @@ export class AircraftController {
         }
       } else if (pilot.isBot) {
         // Automatically level wings when flying straight or without target
-        instructorRoll = MathUtils.clamp(-pilot.roll * 2.0, -1.0, 1.0);
+        const qBot = new Quaternion(pilot.qx, pilot.qy, pilot.qz, pilot.qw);
+        const eBot = new Euler().setFromQuaternion(qBot, "YXZ");
+        instructorRoll = MathUtils.clamp(-eBot.z * 2.0, -1.0, 1.0);
       }
 
       // Smooth per-axis fading mixer

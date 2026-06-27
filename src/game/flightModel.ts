@@ -23,12 +23,12 @@ const G = 9.81;
 
 // AXIS CONTRACT
 
-function getAircraftQuaternion(pitch: number, yaw: number, roll: number) {
-  return new Quaternion().setFromEuler(new Euler(pitch, yaw, roll, "YXZ"));
+function getAircraftQuaternion(qx: number, qy: number, qz: number, qw: number) {
+  return new Quaternion(qx, qy, qz, qw);
 }
 
-function getAircraftBasis(pitch: number, yaw: number, roll: number) {
-  const q = getAircraftQuaternion(pitch, yaw, roll);
+function getAircraftBasis(qx: number, qy: number, qz: number, qw: number) {
+  const q = getAircraftQuaternion(qx, qy, qz, qw);
 
   return {
     q,
@@ -36,10 +36,6 @@ function getAircraftBasis(pitch: number, yaw: number, roll: number) {
     up: LOCAL_UP.clone().applyQuaternion(q).normalize(),
     right: LOCAL_RIGHT.clone().applyQuaternion(q).normalize()
   };
-}
-
-function wrapPi(v: number) {
-  return MathUtils.euclideanModulo(v + Math.PI, Math.PI * 2) - Math.PI;
 }
 
 function approach(current: number, target: number, rate: number, dt: number): number {
@@ -146,7 +142,7 @@ export function updateFlightPhysics(
   let speed = vel.length();
   let speedKmph = speed * 3.6;
 
-  let { q, forward } = getAircraftBasis(phys.pitch, phys.yaw, phys.roll);
+  let { q, forward } = getAircraftBasis(phys.qx, phys.qy, phys.qz, phys.qw);
 
   let pitchInput = command.pitch;
   let rollInput = command.roll;
@@ -307,7 +303,7 @@ export function updateFlightPhysics(
   const totalRollRate  = finalRollRate;
 
   // 4. One-Shot Quaternion Integration to perfectly evolve attitude without Euler locks
-  const qCurrent = getAircraftQuaternion(phys.pitch, phys.yaw, phys.roll);
+  const qCurrent = getAircraftQuaternion(phys.qx, phys.qy, phys.qz, phys.qw);
   const omega = new Vector3(totalPitchRate, totalYawRate, totalRollRate);
   const omegaMag = omega.length();
   if (omegaMag > 1e-8) {
@@ -317,16 +313,22 @@ export function updateFlightPhysics(
     qCurrent.normalize();
   }
 
-  const nextEuler = new Euler().setFromQuaternion(qCurrent, "YXZ");
-  phys.pitch = nextEuler.x;
-  phys.yaw = wrapPi(nextEuler.y);
-  phys.roll = wrapPi(nextEuler.z);
+  phys.qx = qCurrent.x;
+  phys.qy = qCurrent.y;
+  phys.qz = qCurrent.z;
+  phys.qw = qCurrent.w;
 
   // Takeoff & rollout attitude stabilization: prevent wings dipping or nose diving below takeoff speed on ground
   const terrainCheckForAttitude = getTerrainHeight(pos.x, pos.z, mapId);
   if (pos.y <= terrainCheckForAttitude.height + 1.2 && speed * 3.6 < 130) {
-    phys.pitch = MathUtils.clamp(phys.pitch, -0.01, 0.05);
-    phys.roll = 0;
+    const euler = new Euler().setFromQuaternion(qCurrent, "YXZ");
+    euler.x = MathUtils.clamp(euler.x, -0.01, 0.05);
+    euler.z = 0;
+    qCurrent.setFromEuler(euler);
+    phys.qx = qCurrent.x;
+    phys.qy = qCurrent.y;
+    phys.qz = qCurrent.z;
+    phys.qw = qCurrent.w;
   }
 
   // Store angular rates back into the pilot's kinematic registers
@@ -335,7 +337,7 @@ export function updateFlightPhysics(
   phys.avz = totalRollRate;  // Z is roll
 
   // Recalculate 3D basis vectors
-  ({ q, forward } = getAircraftBasis(phys.pitch, phys.yaw, phys.roll));
+  ({ q, forward } = getAircraftBasis(phys.qx, phys.qy, phys.qz, phys.qw));
 
   // Compute aerodynamic forces using updated orientation frame
   speed = vel.length();
@@ -527,9 +529,9 @@ export function applyComponentDamage(
   pilot: Pilot,
   damage: number,
   bulletType: string,
-  hitSpot: Vector3
+  hitSpot: Vector3 | string
 ) {
-  const zone = determineHitZone(hitSpot);
+  const zone = typeof hitSpot === "string" ? hitSpot : determineHitZone(hitSpot);
   const dm = destructible(pilot.entity).damageModel!;
 
   const baseScale = 100 / pilot.specs.durability;

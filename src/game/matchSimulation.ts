@@ -276,9 +276,10 @@ export class MatchSimulation {
       vx: initialVx,
       vy: initialVy,
       vz: initialVz,
-      pitch: 0,
-      roll: 0,
-      yaw: initialYaw,
+      qx: 0,
+      qy: Math.sin(initialYaw / 2),
+      qz: 0,
+      qw: Math.cos(initialYaw / 2),
       throttle: initialThrottle,
       engineTemperature: 75,
       damage: this.createEmptyDamage(),
@@ -399,9 +400,10 @@ export class MatchSimulation {
       vx,
       vy,
       vz,
-      pitch: 0,
-      roll: 0,
-      yaw: getSpawnYaw(team),
+      qx: 0,
+      qy: Math.sin(getSpawnYaw(team) / 2),
+      qz: 0,
+      qw: Math.cos(getSpawnYaw(team) / 2),
       throttle: 0.75,
       engineTemperature: 72,
       damage: this.createEmptyDamage(),
@@ -668,7 +670,9 @@ export class MatchSimulation {
 
   private updateDeadPilot(pilot: Pilot, dt: number) {
     pilot.vy -= 90 * dt;
-    pilot.pitch += dt * 4;
+    const q = new Quaternion(pilot.qx, pilot.qy, pilot.qz, pilot.qw);
+    q.multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), dt * 4));
+    pilot.qx = q.x; pilot.qy = q.y; pilot.qz = q.z; pilot.qw = q.w;
     pilot.x += pilot.vx * dt;
     pilot.y += pilot.vy * dt;
     pilot.z += pilot.vz * dt;
@@ -882,9 +886,11 @@ export class MatchSimulation {
 
         if (pilot.isBot) {
           // Snap bot orientation inward to prevent boundary locking
-          pilot.yaw = Math.atan2(-pilot.x, -pilot.z);
-          pilot.pitch = 0;
-          pilot.roll = 0;
+          const resetYaw = Math.atan2(-pilot.x, -pilot.z);
+          pilot.qx = 0;
+          pilot.qy = Math.sin(resetYaw / 2);
+          pilot.qz = 0;
+          pilot.qw = Math.cos(resetYaw / 2);
         }
       }
     }
@@ -906,9 +912,10 @@ export class MatchSimulation {
     pilot.vx = rvx;
     pilot.vy = rvy;
     pilot.vz = rvz;
-    pilot.pitch = 0;
-    pilot.roll = 0;
-    pilot.yaw = getSpawnYaw(pilot.team);
+    pilot.qx = 0;
+    pilot.qy = Math.sin(getSpawnYaw(pilot.team) / 2);
+    pilot.qz = 0;
+    pilot.qw = Math.cos(getSpawnYaw(pilot.team) / 2);
     pilot.avx = 0;
     pilot.avy = 0;
     pilot.avz = 0;

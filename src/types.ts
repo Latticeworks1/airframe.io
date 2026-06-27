@@ -77,6 +77,7 @@ export interface WeaponSpecs {
   ammoCapacity: number;
   burstCount: number; // for visual tracer grouping
   dispersion: number; // angle variation
+  splashRadius?: number; // meters
   soundType: string;
 }
 
@@ -269,9 +270,10 @@ export class Pilot {
       vx: pData?.vx ?? 0,
       vy: pData?.vy ?? 0,
       vz: pData?.vz ?? 0,
-      pitch: pData?.pitch ?? 0,
-      roll: pData?.roll ?? 0,
-      yaw: pData?.yaw ?? 0,
+      qx: pData?.qx ?? 0,
+      qy: pData?.qy ?? 0,
+      qz: pData?.qz ?? 0,
+      qw: pData?.qw ?? 1,
       avx: pData?.avx,
       avy: pData?.avy,
       avz: pData?.avz
@@ -423,12 +425,14 @@ export class Pilot {
   get vz(): number { return (this.entity.components.get("physical") as PhysicalComponent).vz; }
   set vz(v: number) { (this.entity.components.get("physical") as PhysicalComponent).vz = v; }
 
-  get pitch(): number { return (this.entity.components.get("physical") as PhysicalComponent).pitch; }
-  set pitch(v: number) { (this.entity.components.get("physical") as PhysicalComponent).pitch = v; }
-  get roll(): number { return (this.entity.components.get("physical") as PhysicalComponent).roll; }
-  set roll(v: number) { (this.entity.components.get("physical") as PhysicalComponent).roll = v; }
-  get yaw(): number { return (this.entity.components.get("physical") as PhysicalComponent).yaw; }
-  set yaw(v: number) { (this.entity.components.get("physical") as PhysicalComponent).yaw = v; }
+  get qx(): number { return (this.entity.components.get("physical") as PhysicalComponent).qx; }
+  set qx(v: number) { (this.entity.components.get("physical") as PhysicalComponent).qx = v; }
+  get qy(): number { return (this.entity.components.get("physical") as PhysicalComponent).qy; }
+  set qy(v: number) { (this.entity.components.get("physical") as PhysicalComponent).qy = v; }
+  get qz(): number { return (this.entity.components.get("physical") as PhysicalComponent).qz; }
+  set qz(v: number) { (this.entity.components.get("physical") as PhysicalComponent).qz = v; }
+  get qw(): number { return (this.entity.components.get("physical") as PhysicalComponent).qw; }
+  set qw(v: number) { (this.entity.components.get("physical") as PhysicalComponent).qw = v; }
 
   get avx(): number | undefined { return (this.entity.components.get("physical") as PhysicalComponent).avx; }
   set avx(v: number | undefined) { (this.entity.components.get("physical") as PhysicalComponent).avx = v; }
@@ -546,7 +550,7 @@ export class GroundTarget {
       y: tData?.y ?? 0,
       z: tData?.z ?? 0,
       vx: 0, vy: 0, vz: 0,
-      pitch: 0, yaw: 0, roll: 0
+      qx: 0, qy: 0, qz: 0, qw: 1
     };
     entity.components.set("physical", physical);
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { Vector3, Quaternion, Euler } from "three";
+import { Vector3, Quaternion } from "three";
 import { Room, Callbacks } from "@colyseus/sdk";
 import { ChatMessage, MultiplayerMatchContext } from "./types";
 import { DEFAULT_AIRCRAFT } from "../../game/aircraftData";
@@ -61,7 +61,7 @@ export function setupRoomListeners(
           specs,
           x: 0, y: 350, z: 0,
           vx: 0, vy: 0, vz: 0,
-          pitch: 0, yaw: 0, roll: 0,
+          qx: 0, qy: 0, qz: 0, qw: 1,
           throttle: 0.8,
           engineTemperature: 75,
           damage: {
@@ -101,7 +101,7 @@ export function setupRoomListeners(
       const [id, kind] = entity;
       if (kind === "aircraft") {
         const [
-          _id, _kind, x, y, z, vx, vy, vz, pitch, yaw, roll, throttle,
+          _id, _kind, x, y, z, vx, vy, vz, qx, qy, qz, qw, throttle,
           dmgEngine, dmgLeftWing, dmgRightWing, dmgTail, dmgCockpit, dmgFuelTank, dmgFuselage,
           hasFire, hasOilLeak, ammoPrimary, ammoRocket
         ] = entity;
@@ -113,7 +113,7 @@ export function setupRoomListeners(
           if (isMe) {
             (pilot as any).serverPosition = new Vector3(x, y, z);
             (pilot as any).serverVelocity = new Vector3(vx, vy, vz);
-            (pilot as any).serverRotation = new Quaternion().setFromEuler(new Euler(pitch, yaw, roll, "YXZ"));
+            (pilot as any).serverRotation = new Quaternion(qx, qy, qz, qw);
             (pilot as any).serverLastProcessedSeq = mySeq;
             (pilot as any).serverTick = tick;
           } else {
@@ -130,10 +130,9 @@ export function setupRoomListeners(
               [WeaponType.ROCKET]: ammoRocket
             } as Record<WeaponType, number>;
 
-            const q = new Quaternion().setFromEuler(new Euler(pitch, yaw, roll, "YXZ"));
             pilot.netSnap = {
               x, y, z, vx, vy, vz,
-              qx: q.x, qy: q.y, qz: q.z, qw: q.w,
+              qx, qy, qz, qw,
               at: performance.now()
             };
           }
@@ -174,8 +173,9 @@ export function setupRoomListeners(
   room.onMessage("pilot_respawned", safeWrap(({ id, x, y, z, yaw }) => {
     const pilot = engine.pilots.find((p) => p.id === (id === room.sessionId ? "player" : id));
     if (pilot) {
-      pilot.x = x; pilot.y = y; pilot.z = z; pilot.yaw = yaw;
-      pilot.pitch = 0; pilot.roll = 0; pilot.vx = 0; pilot.vy = 0; pilot.vz = 0;
+      pilot.x = x; pilot.y = y; pilot.z = z;
+      pilot.qx = 0; pilot.qy = Math.sin(yaw / 2); pilot.qz = 0; pilot.qw = Math.cos(yaw / 2);
+      pilot.vx = 0; pilot.vy = 0; pilot.vz = 0;
       pilot.damage = {
         engine: 1.0, leftWing: 1.0, rightWing: 1.0, tail: 1.0,
         cockpit: 1.0, fuelTank: 1.0, fuselage: 1.0,

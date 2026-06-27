@@ -27,6 +27,7 @@ import { SkyZoneRenderer } from "./renderer/SkyZoneRenderer";
 import { HudSyncManager } from "./renderer/HudSyncManager";
 import { AircraftRenderer } from "./renderer/AircraftRenderer";
 import { cockpitPanelState } from "./cockpitPanelState";
+import { AudioSystem } from "./audio/AudioSystem";
 
 export class WorldRenderer {
   public scene!: THREE.Scene;
@@ -42,6 +43,7 @@ export class WorldRenderer {
   public groundTargetRenderer!: GroundTargetRenderer;
   public skyZoneRenderer!: SkyZoneRenderer;
   public hudSyncManager!: HudSyncManager;
+  public audioSystem!: AudioSystem;
 
   private cockpitLight: THREE.PointLight | null = null;
   public aircraftRenderer!: AircraftRenderer;
@@ -174,6 +176,7 @@ export class WorldRenderer {
     this.aircraftRenderer = new AircraftRenderer(this.scene, (x, y, z, colorHex, scale) =>
       this.createSmokeTail(x, y, z, colorHex, scale)
     );
+    this.audioSystem = new AudioSystem(this.camera, this.scene);
 
     window.addEventListener("resize", this.handleResize);
     this.rendererReady = true;
@@ -203,6 +206,7 @@ export class WorldRenderer {
 
     this.screenEffects?.dispose();
     this.screenEffects = null;
+    this.audioSystem?.dispose();
 
     if (this.cloudField) {
       this.scene.remove(this.cloudField.mesh);
@@ -289,7 +293,7 @@ export class WorldRenderer {
     }
 
     const playerPilot = pilots.find((p) => p.id === playerPilotId);
-    if (playerPilot) this.terrainBuilder.updateTiles(playerPilot.x, playerPilot.z);
+    if (playerPilot) this.terrainBuilder.updateTiles(playerPilot.x, playerPilot.z, this.camera, this.renderer);
     this.cloudField?.update(dt);
     if (this.cloudField && this.scene.fog instanceof THREE.Fog) {
       this.cloudField.updateFog(this.scene.fog.near, this.scene.fog.far);
@@ -346,5 +350,7 @@ export class WorldRenderer {
       this.renderer.clear();
       this.renderer.render(this.scene, this.camera);
     }
+    
+    this.audioSystem?.update();
   }
 }
